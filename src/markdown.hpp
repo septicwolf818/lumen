@@ -61,8 +61,6 @@ struct Inline {
 struct TableCell {
     std::vector<Inline> inlines;
     int align = 0;                     // 0 left, 1 center, 2 right
-    std::string code_lang;             // non-empty: cell holds a fenced code block
-    std::string code_text;
 };
 
 struct TableRow {

@@ -389,12 +389,15 @@ std::vector<std::string> split_row(const std::string& line) {
     std::string t = trim(line);
     std::vector<std::string> cells;
     std::string cur;
-    for (char c : t) {
-        if (c == '|') {
+    for (size_t k = 0; k < t.size(); ++k) {
+        if (t[k] == '\\' && k + 1 < t.size() && t[k + 1] == '|') {
+            cur.push_back('|');
+            ++k;
+        } else if (t[k] == '|') {
             cells.push_back(cur);
             cur.clear();
         } else {
-            cur.push_back(c);
+            cur.push_back(t[k]);
         }
     }
     cells.push_back(cur);
@@ -534,50 +537,11 @@ std::vector<Block> parse_blocks(const std::string& src) {
                 b.rows.push_back(std::move(hr));
                 i += 2;
                 while (i < n && !trim(lines[i]).empty() && trim(lines[i]).find('|') != npos) {
-                    // A cell may open a ``` fence that continues on following
-                    // lines. GFM tables are single-line, but code in a table is
-                    // common enough to support: gather until the closing fence
-                    // and store it as a code cell.
-                    auto cells0 = split_row(lines[i]);
-                    int fence_ci = -1;
-                    std::string fence_lang;
-                    for (size_t c = 0; c < cells0.size(); ++c) {
-                        std::string t = trim(cells0[c]);
-                        if (t.rfind("```", 0) == 0 && t.find("```", 3) == npos) {
-                            fence_ci = static_cast<int>(c);
-                            fence_lang = trim(t.substr(3));
-                            break;
-                        }
-                    }
-                    if (fence_ci >= 0) {
-                        std::string code;
-                        ++i;
-                        while (i < n) {
-                            std::string t = trim(lines[i]);
-                            if (t.rfind("```", 0) == 0) { ++i; break; }
-                            if (!code.empty()) code += '\n';
-                            code += lines[i];
-                            ++i;
-                        }
-                        TableRow r;
-                        for (size_t c = 0; c < static_cast<size_t>(fence_ci); ++c) {
-                            TableCell pre;
-                            pre.inlines = parse_inlines(cells0[c]);
-                            pre.align = c < aligns.size() ? aligns[c] : 0;
-                            r.cells.push_back(std::move(pre));
-                        }
-                        TableCell& cell = r.cells.emplace_back();
-                        size_t sp = fence_lang.find_first_of(" \t");
-                        cell.code_lang = sp == npos ? fence_lang : fence_lang.substr(0, sp);
-                        cell.code_text = code;
-                        cell.align = fence_ci < static_cast<int>(aligns.size()) ? aligns[fence_ci] : 0;
-                        b.rows.push_back(std::move(r));
-                        continue;
-                    }
+                    auto cells = split_row(lines[i]);
                     TableRow r;
-                    for (size_t c = 0; c < cells0.size(); ++c) {
+                    for (size_t c = 0; c < cells.size(); ++c) {
                         TableCell cell;
-                        cell.inlines = parse_inlines(cells0[c]);
+                        cell.inlines = parse_inlines(cells[c]);
                         cell.align = c < aligns.size() ? aligns[c] : 0;
                         r.cells.push_back(std::move(cell));
                     }
@@ -980,21 +944,12 @@ void render_table(const Block& b, int width, Lines& out) {
         rendered[ri].resize(ncol);
         for (size_t ci = 0; ci < ncol; ++ci) {
             Line l;
-            if (ci < b.rows[ri].cells.size() && !b.rows[ri].cells[ci].code_lang.empty()) {
-                // Code cell: highlight the first line of the block so the grid
-                // stays single-line (GFM cells cannot span rows).
-                const TableCell& cell = b.rows[ri].cells[ci];
-                std::string first = cell.code_text.substr(0, cell.code_text.find('\n'));
-                bool in_block = false;
-                l = highlight(first, cell.code_lang, in_block);
-            } else {
-                WrapState s;
-                s.width = 1000000;
-                if (ci < b.rows[ri].cells.size())
-                    render_inlines(b.rows[ri].cells[ci].inlines, s, NONE);
-                s.finish();
-                l = s.out.empty() ? Line{} : std::move(s.out[0]);
-            }
+            WrapState s;
+            s.width = 1000000;
+            if (ci < b.rows[ri].cells.size())
+                render_inlines(b.rows[ri].cells[ci].inlines, s, NONE);
+            s.finish();
+            l = s.out.empty() ? Line{} : std::move(s.out[0]);
             size_t w = 0;
             for (auto& sp : l) w += utf8_len(sp.text);
             cw[ci] = std::max(cw[ci], w);

@@ -189,8 +189,8 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
   regenerated with `tools/gen_keyword_data.py`
 - ATX headings, unordered/ordered lists, blockquotes and thematic breaks
 - GFM-style tables with `+`/`-`/`|` borders and per-column alignment, including
-  syntax-highlighted code in cells: inline (`` `python: ...` ``) or a fenced
-  block that continues on the lines below
+  syntax-highlighted inline code in cells (`` `python: ...` ``). Cells are
+  single-line; a fenced block cannot live inside a table.
 - links rendered as `text (url)`
 
 Blocks are rendered as they stream: a fenced code block is highlighted from the
