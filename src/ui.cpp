@@ -11,18 +11,23 @@ namespace {
 // Returns an empty string under NO_COLOR, so write_styled emits plain text.
 std::string sgr(int style) {
     if (util::no_color()) return "";
-    std::string s;
-    if (style & STYLE_BOLD) s += "\033[1m";
-    if (style & STYLE_DIM) s += "\033[2m";
-    if (style & STYLE_RED) s += "\033[31m";
-    if (style & STYLE_GREEN) s += "\033[32m";
-    if (style & STYLE_YELLOW) s += "\033[33m";
-    if (style & STYLE_BLUE) s += "\033[34m";
-    if (style & STYLE_MAGENTA) s += "\033[35m";
-    if (style & STYLE_CYAN) s += "\033[36m";
-    if (style & STYLE_UNDERLINE) s += "\033[4m";
-    if (style & STYLE_REVERSE) s += "\033[7m";
-    return s;
+    std::string params;
+    auto add = [&](const char* p) {
+        if (!params.empty()) params += ';';
+        params += p;
+    };
+    if (style & STYLE_BOLD) add("1");
+    if (style & STYLE_DIM) add("2");
+    if (style & STYLE_UNDERLINE) add("4");
+    if (style & STYLE_REVERSE) add("7");
+    if (style & STYLE_RED) add("31");
+    if (style & STYLE_GREEN) add("32");
+    if (style & STYLE_YELLOW) add("33");
+    if (style & STYLE_BLUE) add("34");
+    if (style & STYLE_MAGENTA) add("35");
+    if (style & STYLE_CYAN) add("36");
+    if (params.empty()) return "";
+    return "\033[" + params + "m";
 }
 
 void write_styled(Terminal& t, int style, const std::string& text) {
@@ -163,14 +168,7 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
 
-    // Thinking: dim uncoloured text only. SGR 2 (faint) on the Linux console
-    // and several other terminals drops the foreground colour, so overlaying
-    // dim on a coloured span would wipe the syntax highlight.
-    if (dim) {
-        const int color = STYLE_RED | STYLE_GREEN | STYLE_YELLOW | STYLE_BLUE |
-                          STYLE_MAGENTA | STYLE_CYAN | STYLE_REVERSE;
-        if (!(r & color)) r |= STYLE_DIM;
-    }
+    if (dim) r |= STYLE_DIM;
     return r;
 }
 
