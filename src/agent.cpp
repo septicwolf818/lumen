@@ -170,6 +170,41 @@ void Agent::load_session(const std::string& name) {
 
 // Draw one stored message the same way on startup and on /session load,
 // including tool calls and their results.
+namespace {
+
+// Shared by the live tool loop and session replay so tool params always
+// render exactly the same way in both.
+constexpr size_t kToolArgPreview = 120;
+constexpr size_t kToolResultPreview = 2000;
+
+std::vector<std::string> tool_arg_lines(const nlohmann::json& tc) {
+    std::vector<std::string> lines;
+    if (!tc.is_object() || !tc.contains("function")) return lines;
+    const auto& fn = tc["function"];
+    if (!fn.contains("arguments")) return lines;
+    nlohmann::json args = nlohmann::json::object();
+    if (fn["arguments"].is_string()) {
+        try {
+            args = nlohmann::json::parse(fn["arguments"].get<std::string>());
+        } catch (...) {
+            return lines;
+        }
+    } else if (fn["arguments"].is_object()) {
+        args = fn["arguments"];
+    } else {
+        return lines;
+    }
+    for (auto it = args.begin(); it != args.end(); ++it) {
+        std::string v = it.value().is_string() ? it.value().get<std::string>()
+                                               : it.value().dump();
+        if (v.size() > kToolArgPreview) v = v.substr(0, kToolArgPreview) + "...";
+        lines.push_back("  " + it.key() + ": " + v);
+    }
+    return lines;
+}
+
+}  // namespace
+
 void Agent::replay_message(const Message& m) {
     if (m.role == Role::System) return;
     if (m.role == Role::User) {
@@ -194,19 +229,26 @@ void Agent::replay_message(const Message& m) {
             if (has_content || has_tools) ui_.append("");
         }
         if (has_content) ui_.append(m.content);
-        if (m.tool_calls.is_array()) {
+        if (has_tools) {
+            // Mirror the live layout: blank after the response, then the tool
+            // call with its params - the [result] that follows attaches
+            // directly, exactly as it does while generating.
+            if (has_content || m.thinking.empty()) ui_.append("");
             for (const auto& tc : m.tool_calls) {
                 std::string name = "tool";
                 if (tc.contains("function") && tc["function"].contains("name"))
                     name = tc["function"]["name"].get<std::string>();
                 ui_.append("[tool] " + name, STYLE_YELLOW);
+                for (const auto& l : tool_arg_lines(tc)) ui_.append(l);
             }
+        } else {
+            ui_.append("");
         }
-        ui_.append("");
     } else if (m.role == Role::Tool) {
         ui_.append("[result]", 1);
         std::string c = m.content;
-        if (c.size() > 500) c = c.substr(0, 500) + "\n[truncated]";
+        if (c.size() > kToolResultPreview)
+            c = c.substr(0, kToolResultPreview) + "\n[truncated]";
         ui_.append(c, c.rfind("ERROR:", 0) == 0 ? STYLE_RED : STYLE_NORMAL);
         ui_.append("");
     }
@@ -942,13 +984,7 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
             }
         }
         ui_.append("[tool] " + name, STYLE_YELLOW);
-        if (args.is_object()) {
-            for (auto it = args.begin(); it != args.end(); ++it) {
-                std::string v = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
-                if (v.size() > 120) v = v.substr(0, 120) + "...";
-                ui_.append("  " + it.key() + ": " + v);
-            }
-        }
+        for (const auto& l : tool_arg_lines(tc)) ui_.append(l);
         ui_.redraw();
 
         auto result = tools_->run(name, args, [this](const std::string& prompt) {
@@ -957,7 +993,8 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
 
         ui_.append("[result]", 1);
         std::string out = result.output;
-        if (out.size() > 2000) out = out.substr(0, 2000) + "\n[truncated]";
+        if (out.size() > kToolResultPreview)
+            out = out.substr(0, kToolResultPreview) + "\n[truncated]";
         ui_.append(out, out.rfind("ERROR:", 0) == 0 ? STYLE_RED : STYLE_NORMAL);
         ui_.append("");
         ui_.redraw();
