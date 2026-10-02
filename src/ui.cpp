@@ -145,23 +145,23 @@ int map_md_style(int st) {
     if (st & md::QUOTE) r |= STYLE_DIM;
     if (st & md::MARKER) r |= STYLE_DIM;
 
-    // Code block syntax colours. Each token category gets its own attribute so
-    // the block reads like a real editor on a plain Linux console. CODE_BLOCK is
-    // the guaranteed base colour: if the keyword data fails to load, spans carry
-    // only CODE_BLOCK and code still renders in cyan with no syntax colouring.
-    if (st & md::CODE_BLOCK) r |= STYLE_CYAN;  // default / fallback code text
+    // Code block syntax colours. The Linux console offers only seven usable
+    // foreground colours, so categories are spread across distinct ones and
+    // bold is reserved for keywords: default text stays uncoloured, which keeps
+    // the highlighted tokens clearly visible instead of all-cyan mush.
+    if (st & md::CODE_BLOCK) r |= STYLE_NORMAL;   // base code text: default fg
     if (st & md::SYN_KEYWORD) r |= STYLE_BOLD | STYLE_BLUE;
-    if (st & md::SYN_CONSTANT) r |= STYLE_BOLD | STYLE_MAGENTA;
+    if (st & md::SYN_CONSTANT) r |= STYLE_MAGENTA;
     if (st & md::SYN_TYPE) r |= STYLE_YELLOW;
-    if (st & md::SYN_BUILTIN) r |= STYLE_CYAN;
+    if (st & md::SYN_BUILTIN) r |= STYLE_GREEN;
     if (st & md::SYN_FUNCTION) r |= STYLE_BOLD | STYLE_CYAN;
-    if (st & md::SYN_VARIABLE) r |= STYLE_CYAN;
-    if (st & md::SYN_STRING) r |= STYLE_GREEN;
-    if (st & md::SYN_NUMBER) r |= STYLE_MAGENTA;
+    if (st & md::SYN_VARIABLE) r |= STYLE_NORMAL;
+    if (st & md::SYN_STRING) r |= STYLE_RED;
+    if (st & md::SYN_NUMBER) r |= STYLE_MAGENTA | STYLE_BOLD;
     if (st & md::SYN_COMMENT) r |= STYLE_DIM;
-    if (st & md::SYN_OPERATOR) r |= STYLE_RED;
+    if (st & md::SYN_OPERATOR) r |= STYLE_NORMAL;  // punctuation: uncoloured
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
-    if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW;
+    if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
     return r;
 }
 
