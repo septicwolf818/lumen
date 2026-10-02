@@ -91,7 +91,7 @@ public:
     // Prompt for y/N confirmation (blocks on input)
     bool confirm(InputReader& in, const std::string& prompt);
 
-    // Show a temporary message on status / bottom
+    // Append a styled line to the scrollback (e.g. a transient notice)
     void message(const std::string& msg, int style = STYLE_DIM);
 
     // Queued messages waiting for the current response to finish
@@ -116,6 +116,7 @@ private:
     bool streaming_ = false;
     int stream_style_ = 0;
     std::string stream_acc_;
+    size_t stream_base_ = 0;  // index of the line begin_stream() opened
     std::string last_message_;
     size_t queue_count_ = 0;
 

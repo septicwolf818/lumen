@@ -11,8 +11,6 @@ std::atomic<bool> Terminal::got_sigterm{false};
 std::atomic<bool> Terminal::got_sigwinch{false};
 std::atomic<int>  Terminal::sigint_count{0};
 
-static Terminal* g_term = nullptr;
-
 static void on_signal(int sig) {
     if (sig == SIGINT) {
         Terminal::got_sigint.store(true);
@@ -25,13 +23,11 @@ static void on_signal(int sig) {
 }
 
 Terminal::Terminal() {
-    g_term = this;
     update_size();
 }
 
 Terminal::~Terminal() {
     restore();
-    if (g_term == this) g_term = nullptr;
 }
 
 void Terminal::install_signal_handlers() {

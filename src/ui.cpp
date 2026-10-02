@@ -35,6 +35,17 @@ void write_styled(Terminal& t, int style, const std::string& text) {
     t.reset_attrs();
 }
 
+// Cut to at most n bytes without splitting a UTF-8 sequence.
+std::string utf8_prefix(const std::string& s, size_t n) {
+    if (s.size() <= n) return s;
+    size_t cut = n;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
+    return s.substr(0, cut);
+}
+
+// Scrollback cap.
+constexpr size_t kMaxLines = 5000;
+
 }  // namespace
 
 UI::UI(Terminal& term) : term_(term) {}
@@ -55,11 +66,9 @@ void UI::wrap_and_push(const std::string& text, int style) {
     for (auto& w : wrapped) {
         lines_.push_back({w, style});
     }
-    // cap memory
-    const size_t max_lines = 5000;
-    while (lines_.size() > max_lines) lines_.pop_front();
-    if (scroll_offset_ == 0) {
-        // stay at bottom
+    while (lines_.size() > kMaxLines) {
+        lines_.pop_front();
+        if (stream_base_ > 0) --stream_base_;  // indices shift with the pop
     }
 }
 
@@ -105,12 +114,6 @@ void UI::append(const std::string& text, int style) {
         if (nl == std::string::npos) break;
         start = nl + 1;
     }
-    if (scroll_offset_ == 0) {
-        // auto follow
-    } else {
-        // user scrolled up – keep offset roughly stable by adding to offset
-        // (new lines at bottom don't move the view)
-    }
 }
 
 void UI::append_raw(const std::string& text) {
@@ -122,6 +125,9 @@ void UI::begin_stream(int style) {
     stream_style_ = style;
     stream_acc_.clear();
     lines_.push_back({"", style});
+    // The stream block owns everything from this line on; stream_token()
+    // pops back to here before re-wrapping the accumulated text.
+    stream_base_ = lines_.size() - 1;
 }
 
 void UI::stream_token(const std::string& tok) {
@@ -129,46 +135,14 @@ void UI::stream_token(const std::string& tok) {
         begin_stream();
     }
     stream_acc_ += tok;
-    // rebuild last line(s) from stream_acc_
-    // simple approach: pop last open lines and re-wrap
-    // For efficiency on Pi: just append visible chars to last line until wrap
-    if (lines_.empty()) lines_.push_back({"", 0});
-    // naive: replace last line content and re-wrap stream_acc_
-    // Count how many lines belong to current stream – keep it simple:
-    // remove trailing empty/stream lines and re-push
-    while (!lines_.empty() && lines_.back().text.empty() && lines_.size() > 1) {
-        // keep at least one
-        break;
-    }
-    // Better simple approach for streaming:
     auto wrapped = wrap(stream_acc_, std::max(10, term_.cols() - 1));
-    // Find start of stream block: we tagged begin with one empty line; replace from there
-    // Simplest robust: keep a stream_start index
-    // For this version: pop lines that were added during stream and re-add
-    // We store stream_line_count
-    static thread_local size_t stream_base = 0;
-    if (stream_acc_.size() == tok.size()) {
-        // first token of this stream
-        stream_base = lines_.size() > 0 ? lines_.size() - 1 : 0;
-        if (lines_.empty()) {
-            lines_.push_back({"", 0});
-            stream_base = 0;
-        }
-    }
-    while (lines_.size() > stream_base) lines_.pop_back();
+    while (lines_.size() > stream_base_) lines_.pop_back();
     for (auto& w : wrapped) lines_.push_back({w, stream_style_});
     if (lines_.empty()) lines_.push_back({"", stream_style_});
-
-    if (scroll_offset_ == 0) {
-        // will redraw at bottom
-    }
 }
 
 void UI::end_stream() {
     streaming_ = false;
-    if (!stream_acc_.empty() && (lines_.empty() || lines_.back().text != stream_acc_)) {
-        // ensure final
-    }
     stream_acc_.clear();
 }
 
@@ -177,6 +151,7 @@ void UI::clear_conversation() {
     scroll_offset_ = 0;
     streaming_ = false;
     stream_acc_.clear();
+    stream_base_ = 0;
 }
 
 void UI::scroll_up(int n) {
@@ -331,7 +306,7 @@ void UI::draw_status() {
     for (auto& p : parts) {
         if (avail <= 0) break;
         if (static_cast<int>(p.text.size()) > avail)
-            p.text.resize(static_cast<size_t>(avail));
+            p.text = utf8_prefix(p.text, static_cast<size_t>(avail));
         write_styled(term_, p.style, p.text);
         avail -= static_cast<int>(p.text.size());
     }
@@ -351,7 +326,7 @@ void UI::draw_viewport() {
             const auto& dl = lines_[static_cast<size_t>(idx)];
             std::string t = dl.text;
             if (t.size() > static_cast<size_t>(term_.cols()))
-                t = t.substr(0, static_cast<size_t>(term_.cols()));
+                t = utf8_prefix(t, static_cast<size_t>(term_.cols()));
             write_styled(term_, dl.style, t);  // escapes are added after truncation
         }
     }

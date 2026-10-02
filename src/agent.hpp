@@ -80,7 +80,7 @@ private:
     void refresh_ctx_limit();                     // detect model switch / /api/ps
     void update_ctx_display();                    // push "12.4k/32k (39%)" to UI
     void reset_ctx_tracking();                    // drop anchor + limit
-    void save_session(bool notify = true);
+    bool save_session(bool notify = true);
     void new_session(const std::string& name = "");
     void load_session(const std::string& name);
     std::vector<nlohmann::json> build_messages() const;

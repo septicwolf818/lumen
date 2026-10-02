@@ -36,8 +36,14 @@ void Agent::init_session() {
             session_ = *s;
             if (!session_.model.empty()) cfg_.model = session_.model;
             if (!session_.cwd.empty()) {
-                tools_->set_cwd(session_.cwd);
-                chdir(session_.cwd.c_str());
+                // Only claim the stored cwd if it still exists; otherwise stay
+                // where we are instead of desyncing tools from the process.
+                if (chdir(session_.cwd.c_str()) == 0) {
+                    tools_->set_cwd(session_.cwd);
+                } else {
+                    ui_.message("Session cwd is gone, keeping " + tools_->cwd(),
+                                STYLE_YELLOW);
+                }
             }
             // replay messages into UI
             for (const auto& m : session_.messages) replay_message(m);
@@ -134,7 +140,7 @@ void Agent::new_session(const std::string& name) {
     update_status();
 }
 
-void Agent::save_session(bool notify) {
+bool Agent::save_session(bool notify) {
     session_.model = cfg_.model;
     session_.modified = util::now_iso8601();
     session_.cwd = tools_->cwd();
@@ -142,9 +148,10 @@ void Agent::save_session(bool notify) {
         cfg_.last_session = session_.name;
         cfg_.save();
         if (notify) ui_.message("Session saved: " + session_.name);
-    } else {
-        ui_.message("Failed to save session", STYLE_RED);
+        return true;
     }
+    ui_.message("Failed to save session", STYLE_RED);
+    return false;
 }
 
 void Agent::load_session(const std::string& name) {
@@ -156,8 +163,11 @@ void Agent::load_session(const std::string& name) {
     session_ = *s;
     if (!session_.model.empty()) cfg_.model = session_.model;
     if (!session_.cwd.empty()) {
-        tools_->set_cwd(session_.cwd);
-        chdir(session_.cwd.c_str());
+        if (chdir(session_.cwd.c_str()) == 0) {
+            tools_->set_cwd(session_.cwd);
+        } else {
+            ui_.message("Session cwd is gone, keeping " + tools_->cwd(), STYLE_YELLOW);
+        }
     }
     cfg_.last_session = session_.name;
     cfg_.save();
@@ -236,7 +246,9 @@ void Agent::replay_message(const Message& m) {
             if (has_content || m.thinking.empty()) ui_.append("");
             for (const auto& tc : m.tool_calls) {
                 std::string name = "tool";
-                if (tc.contains("function") && tc["function"].contains("name"))
+                if (tc.contains("function") && tc["function"].is_object() &&
+                    tc["function"].contains("name") &&
+                    tc["function"]["name"].is_string())
                     name = tc["function"]["name"].get<std::string>();
                 ui_.append("[tool] " + name, STYLE_YELLOW);
                 for (const auto& l : tool_arg_lines(tc)) ui_.append(l);
@@ -300,7 +312,7 @@ bool Agent::select_model_interactive() {
         ui_.message("No models found. Pull one with: ollama pull <name>", STYLE_RED);
         return false;
     }
-        ui_.append("Available models:", STYLE_BOLD);
+    ui_.append("Available models:", STYLE_BOLD);
     for (size_t i = 0; i < models->size(); ++i) {
         ui_.append(std::to_string(i + 1) + ". " + (*models)[i].name);
     }
@@ -361,7 +373,6 @@ bool Agent::select_model_interactive() {
 }
 
 void Agent::handle_command(const std::string& line) {
-    auto parts = util::split_lines(line);  // not ideal
     // simple split on space
     std::vector<std::string> tok;
     {
@@ -407,8 +418,31 @@ void Agent::handle_command(const std::string& line) {
             if (Session::remove(tok[2])) ui_.message("Deleted " + tok[2]);
             else ui_.message("Not found", STYLE_RED);
         } else if (tok[1] == "rename" && tok.size() >= 4) {
-            session_.name = tok[3];
-            save_session();
+            // Rename the current session only: the first argument must name
+            // it, so "/session rename A B" cannot silently ignore A. The old
+            // file is removed only after the new one saved successfully, and
+            // only when both sanitize to different filenames.
+            if (tok[2] != session_.name) {
+                ui_.message("Current session is '" + session_.name +
+                                "' - usage: /session rename " + session_.name +
+                                " NEWNAME",
+                            STYLE_YELLOW);
+            } else if (tok[3] == session_.name) {
+                ui_.message("Session is already named " + session_.name);
+            } else {
+                std::string old_name = session_.name;
+                session_.name = tok[3];
+                if (save_session(false)) {
+                    if (Session::sanitize_filename(old_name) !=
+                        Session::sanitize_filename(session_.name)) {
+                        Session::remove(old_name);
+                    }
+                    ui_.message("Renamed to " + session_.name);
+                    update_status();
+                } else {
+                    session_.name = old_name;  // keep the old identity on failure
+                }
+            }
         } else {
             ui_.message("Usage: /session [new|list|load|delete|rename] ...", STYLE_YELLOW);
         }
@@ -940,7 +974,7 @@ void Agent::run_generation() {
         asst.content = final_msg["content"].get<std::string>();
     if (final_msg.contains("thinking") && final_msg["thinking"].is_string())
         asst.thinking = final_msg["thinking"].get<std::string>();
-    if (final_msg.contains("tool_calls"))
+    if (final_msg.contains("tool_calls") && final_msg["tool_calls"].is_array())
         asst.tool_calls = final_msg["tool_calls"];
     session_.messages.push_back(asst);
     save_session(false);  // every completed model response is persisted
@@ -970,7 +1004,8 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
         if (tc.contains("id") && tc["id"].is_string()) id = tc["id"].get<std::string>();
         if (tc.contains("function")) {
             auto& fn = tc["function"];
-            if (fn.contains("name")) name = fn["name"].get<std::string>();
+            if (fn.contains("name") && fn["name"].is_string())
+                name = fn["name"].get<std::string>();
             if (fn.contains("arguments")) {
                 if (fn["arguments"].is_string()) {
                     try {
@@ -1046,6 +1081,10 @@ int Agent::run() {
 
         auto ev = input_.read(100);
         if (!ev) continue;
+
+        // Double Ctrl-C to quit only when the presses are consecutive:
+        // any other key restarts the pair.
+        if (ev->key != Key::CtrlC) Terminal::sigint_count.store(0);
 
         switch (ev->key) {
             case Key::CtrlQ:
