@@ -75,6 +75,30 @@ size_t utf8_len(const std::string& s) {
 // Scrollback cap.
 constexpr size_t kMaxLines = 5000;
 
+constexpr uint64_t kMarqueeMs = 500;
+
+struct StatusChar {
+    std::string bytes;
+    int style;
+};
+
+size_t utf8_seq_len(unsigned char c) {
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+void push_status_chars(std::vector<StatusChar>& out, const std::string& s, int style) {
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t len = utf8_seq_len(static_cast<unsigned char>(s[i]));
+        if (i + len > s.size()) len = 1;
+        out.push_back({s.substr(i, len), style});
+        i += len;
+    }
+}
+
 }  // namespace
 
 UI::UI(Terminal& term) : term_(term) {}
@@ -83,6 +107,7 @@ void UI::set_status(const std::string& model, const std::string& session, const 
     status_model_ = model;
     status_session_ = session;
     status_cwd_ = cwd;
+    marquee_offset_ = 0;
 }
 
 int UI::viewport_rows() const {
@@ -328,17 +353,8 @@ std::string UI::utf8_from_cp(uint32_t cp) {
     return r;
 }
 
-void UI::draw_status() {
-    term_.move_cursor(1, 1);
-    term_.clear_line();
-
-    // Assemble as (text, style) parts so the visible text can be truncated to
-    // the terminal width without cutting into an escape sequence.
-    struct Part {
-        std::string text;
-        int style;
-    };
-    std::vector<Part> parts;
+std::vector<std::pair<std::string, int>> UI::status_parts() const {
+    std::vector<std::pair<std::string, int>> parts;
     auto kv = [&parts](const std::string& label, const std::string& value) {
         if (!parts.empty()) parts.push_back({"  ", STYLE_NORMAL});
         parts.push_back({label, STYLE_BOLD | STYLE_CYAN});
@@ -348,16 +364,70 @@ void UI::draw_status() {
     kv("session:", status_session_.empty() ? "(none)" : status_session_);
     if (!status_ctx_.empty()) kv("ctx:", status_ctx_);
     if (!status_cwd_.empty()) kv("cwd:", status_cwd_);
+    return parts;
+}
 
-    int avail = term_.cols();
-    for (auto& p : parts) {
-        if (avail <= 0) break;
-        // Truncate by characters (utf8_prefix) and count the written part in
-        // characters too - byte sizes would cut multi-byte values early.
-        p.text = utf8_prefix(p.text, static_cast<size_t>(avail));
-        write_styled(term_, p.style, p.text);
-        avail -= static_cast<int>(utf8_len(p.text));
+void UI::draw_status() {
+    term_.move_cursor(1, 1);
+    term_.clear_line();
+
+    auto parts = status_parts();
+    const int cols = std::max(1, term_.cols());
+
+    size_t total = 0;
+    for (const auto& p : parts) total += utf8_len(p.first);
+
+    if (total <= static_cast<size_t>(cols)) {
+        marquee_offset_ = 0;
+        int avail = cols;
+        for (auto& p : parts) {
+            if (avail <= 0) break;
+            std::string t = utf8_prefix(p.first, static_cast<size_t>(avail));
+            write_styled(term_, p.second, t);
+            avail -= static_cast<int>(utf8_len(t));
+        }
+        return;
     }
+
+    std::vector<StatusChar> chars;
+    for (const auto& p : parts) push_status_chars(chars, p.first, p.second);
+    push_status_chars(chars, "   ", STYLE_DIM);
+
+    const size_t period = chars.size();
+    if (period == 0) return;
+    marquee_offset_ %= period;
+
+    size_t shown = 0;
+    size_t idx = marquee_offset_;
+    while (shown < static_cast<size_t>(cols)) {
+        const int style = chars[idx].style;
+        std::string run;
+        while (shown < static_cast<size_t>(cols) && chars[idx].style == style) {
+            run += chars[idx].bytes;
+            idx = (idx + 1) % period;
+            ++shown;
+        }
+        write_styled(term_, style, run);
+    }
+}
+
+void UI::tick_marquee() {
+    size_t total = 0;
+    for (const auto& p : status_parts()) total += utf8_len(p.first);
+
+    if (total <= static_cast<size_t>(std::max(1, term_.cols()))) {
+        if (marquee_offset_ != 0) {
+            marquee_offset_ = 0;
+            redraw();
+        }
+        return;
+    }
+
+    uint64_t now = util::steady_ms();
+    if (now - marquee_last_ms_ < kMarqueeMs) return;
+    marquee_last_ms_ = now;
+    marquee_offset_ += 1;
+    redraw();
 }
 
 // First conversation line and row count of the window currently shown.

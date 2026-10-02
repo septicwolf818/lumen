@@ -4,6 +4,7 @@
 #include "input.hpp"
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 #include <deque>
 
@@ -110,6 +111,7 @@ public:
     void set_working(bool w);
     bool working() const { return working_depth_ > 0; }
     void tick_spinner();  // advance the frame (throttled) and redraw
+    void tick_marquee();
 
     int viewport_rows() const;
 
@@ -135,10 +137,13 @@ private:
     int working_depth_ = 0;      // nested set_working() frames
     int spinner_frame_ = 0;      // index into "|/-\"
     uint64_t spinner_last_ms_ = 0;
+    size_t marquee_offset_ = 0;
+    uint64_t marquee_last_ms_ = 0;
 
     void wrap_and_push(const std::string& text, int style);
     std::vector<std::string> wrap(const std::string& text, int width) const;
     void viewport_window(int& start, int& rows) const;
+    std::vector<std::pair<std::string, int>> status_parts() const;
     void draw_status();
     void draw_viewport();
     void draw_input();

@@ -1026,6 +1026,7 @@ void Agent::flush_queue() {
 // prompt or a command.
 void Agent::pump_input() {
     ui_.tick_spinner();  // animate the separator while the model works
+    ui_.tick_marquee();
     while (auto ev = input_.read(0)) {
         switch (ev->key) {
             case Key::Enter: {
@@ -1291,6 +1292,8 @@ int Agent::run() {
             ui_.set_input("");
             ui_.redraw();
         }
+
+        ui_.tick_marquee();
 
         auto ev = input_.read(100);
         if (!ev) continue;
