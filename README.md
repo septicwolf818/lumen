@@ -182,10 +182,10 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
   ```
 - syntax highlighting for C, C++, C#, Java, JavaScript/TypeScript (and
   JSX/TSX/Vue/Svelte), Go, Rust, Python, Ruby, PHP, Perl, Kotlin, Swift, Scala,
-  Lua, R, Dart, Elixir, Erlang, Haskell, Clojure, Zig, shell, SQL, HTML, CSS,
-  JSON and YAML - driven by keyword data in
-  [`data/keywords.json`](data/keywords.json), regenerated with
-  `tools/gen_keyword_data.py`
+  Lua, R, Dart, Elixir, Erlang, Haskell, Clojure, Groovy, PowerShell, GDScript,
+  VB.NET, OCaml, Julia, Fortran, Zig, shell, SQL, HTML, CSS, JSON and YAML -
+  driven by keyword data in [`data/keywords.json`](data/keywords.json),
+  regenerated with `tools/gen_keyword_data.py`
 - ATX headings, unordered/ordered lists, blockquotes and thematic breaks
 - GFM-style tables with `+`/`-`/`|` borders and per-column alignment
 - links rendered as `text (url)`

@@ -4,12 +4,21 @@
 
 #include <cctype>
 #include <map>
+#include <string>
 
-#include "keywords_data.inc"  // generated: kKeywordsJson
+#include "keywords_data.inc"  // generated: kKeywordsJsonChunks[]
 
 namespace md {
 namespace detail {
 namespace {
+
+// The embedded JSON is split across chunks to keep every string literal within
+// the compiler's portable length; join them once for parsing.
+std::string keywords_json() {
+    std::string s;
+    for (const char* const* p = kKeywordsJsonChunks; p && *p; ++p) s += *p;
+    return s;
+}
 
 std::vector<std::string> json_strings(const nlohmann::json& j) {
     std::vector<std::string> out;
@@ -41,7 +50,7 @@ const std::map<std::string, LangProfile>& profiles() {
         // degrades to an empty table: unknown languages then render as plain
         // code in the built-in colour instead of aborting the program.
         try {
-            nlohmann::json j = nlohmann::json::parse(kKeywordsJson, nullptr, false);
+            nlohmann::json j = nlohmann::json::parse(keywords_json(), nullptr, false);
             if (j.is_discarded() || !j.is_object() || !j.contains("languages") ||
                 !j["languages"].is_object())
                 return t;
