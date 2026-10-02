@@ -16,7 +16,7 @@ all: build
 
 build:
 	cmake -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=$(BUILD_TYPE)
-	cmake --build $(BUILD_DIR) --parallel
+	cmake --build $(BUILD_DIR)
 
 install: build
 	install -d $(DESTDIR)$(PREFIX)/bin
