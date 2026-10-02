@@ -5,6 +5,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 
 static std::string role_to_str(Role r) {
     switch (r) {
@@ -236,6 +238,45 @@ std::vector<std::string> Session::list() {
     }
     std::sort(names.begin(), names.end());
     return names;
+}
+
+std::vector<Session::Info> Session::list_info() {
+    std::vector<Info> out;
+    util::ensure_dir(util::sessions_dir());
+    std::error_code ec;
+    for (auto& ent : fs::directory_iterator(util::sessions_dir(), ec)) {
+        std::error_code tec;
+        if (!ent.is_regular_file(tec)) continue;
+        auto p = ent.path();
+        if (p.extension() != ".json") continue;
+
+        Info info;
+        info.name = p.stem().string();
+
+        // The file mtime is the last save, i.e. the last activity, and needs
+        // no parsing of (possibly large) session JSON.
+        std::error_code fec;
+        auto ftime = fs::last_write_time(p, fec);
+        if (!fec) {
+            // Portable file_clock -> system_clock conversion (C++17).
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+            std::time_t t = std::chrono::system_clock::to_time_t(sctp);
+            std::tm tmv{};
+            if (localtime_r(&t, &tmv)) {
+                char buf[32];
+                if (std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tmv))
+                    info.modified = buf;
+            }
+        }
+        out.push_back(std::move(info));
+    }
+    // Most recent first; names break ties and order files with no timestamp.
+    std::sort(out.begin(), out.end(), [](const Info& a, const Info& b) {
+        if (a.modified != b.modified) return a.modified > b.modified;
+        return a.name < b.name;
+    });
+    return out;
 }
 
 bool Session::remove(const std::string& name_or_id) {

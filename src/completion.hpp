@@ -130,7 +130,10 @@ inline std::vector<std::string> path_candidates(const std::string& word) {
 //   - the first token, when the input starts with '/'
 //   - the second token of "/session ..." (subcommands)
 //   - the second token of "/cd ..." (filesystem paths)
-inline Target analyze(const std::string& input, size_t cursor) {
+//   - the session name argument of "/session load|delete|rename ..."
+// `sessions` supplies the candidate session names for the last case.
+inline Target analyze(const std::string& input, size_t cursor,
+                      const std::vector<std::string>& sessions = {}) {
     Target t;
     if (input.empty() || input[0] != '/') return t;
     if (cursor > input.size()) cursor = input.size();
@@ -189,6 +192,17 @@ inline Target analyze(const std::string& input, size_t cursor) {
         if (detail::ieq(first, "/cd")) {
             t.valid = true;
             t.matches = path_candidates(word);
+            return t;
+        }
+    }
+    if (idx == 2) {
+        std::string first = input.substr(toks[0].start, toks[0].end - toks[0].start);
+        std::string second = input.substr(toks[1].start, toks[1].end - toks[1].start);
+        if (detail::ieq(first, "/session") &&
+            (detail::ieq(second, "load") || detail::ieq(second, "delete") ||
+             detail::ieq(second, "rename"))) {
+            t.valid = true;
+            t.matches = detail::filter(sessions, word);
             return t;
         }
     }

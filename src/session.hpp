@@ -35,6 +35,12 @@ struct Session {
     bool save() const;
     static std::optional<Session> load(const std::string& name_or_id);
     static std::vector<std::string> list();
+    // Session files with their last-activity time, most recent first.
+    struct Info {
+        std::string name;
+        std::string modified;  // local "YYYY-MM-DD HH:MM", empty if unknown
+    };
+    static std::vector<Info> list_info();
     static bool remove(const std::string& name_or_id);
     static std::string make_id();
     // Filesystem-safe form of a session name (shared by save and rename)

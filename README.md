@@ -95,7 +95,7 @@ TERM=linux lumen
 /model [NAME]         List or select model
 /session              Session info
 /session new [NAME]   Create new session
-/session list         List sessions
+/session list         List sessions (newest first, with last activity)
 /session load NAME    Load session
 /session rename A B   Rename
 /session delete NAME  Delete session
@@ -111,7 +111,9 @@ TERM=linux lumen
 Press `Tab` while typing a command to complete it (`/mo<Tab>` -> `/model`).
 The first `Tab` shows all matches and extends to their common prefix, further
 presses cycle through them. `/session` subcommands complete the same way
-(`/session l<Tab>` -> `/session list`).
+(`/session l<Tab>` -> `/session list`), and the session name after
+`/session load`, `/session delete` and `/session rename` completes against the
+stored sessions (`/session load deb<Tab>`).
 
 When a session still has an auto-generated name and a model is configured,
 lumen names it from the conversation after the first turn: the model's answer is

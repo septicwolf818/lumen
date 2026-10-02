@@ -584,10 +584,16 @@ void Agent::handle_command(const std::string& line) {
             std::string n = tok.size() >= 3 ? tok[2] : "";
             new_session(n);
         } else if (tok[1] == "list") {
-            auto names = Session::list();
-            ui_.append("Sessions:", STYLE_BOLD);
-            if (names.empty()) ui_.append("(none)");
-            for (auto& n : names) ui_.append("  " + n);
+            auto infos = Session::list_info();
+            std::string cur = session_.name.empty() ? session_.id
+                                                    : Session::sanitize_filename(session_.name);
+            ui_.append("Sessions (most recent first):", STYLE_BOLD);
+            if (infos.empty()) ui_.append("(none)");
+            for (auto& info : infos) {
+                std::string mark = (info.name == cur) ? "* " : "  ";
+                std::string when = info.modified.empty() ? "          " : info.modified;
+                ui_.append(mark + when + "  " + info.name);
+            }
         } else if (tok[1] == "load" && tok.size() >= 3) {
             load_session(tok[2]);
         } else if (tok[1] == "delete" && tok.size() >= 3) {
@@ -678,7 +684,7 @@ bool contains(const std::vector<std::string>& v, const std::string& s) {
 // common prefix and lists the candidates, further presses cycle through them.
 void Agent::handle_tab() {
     std::string in = ui_.input_buf();
-    auto t = completion::analyze(in, ui_.cursor());
+    auto t = completion::analyze(in, ui_.cursor(), Session::list());
     if (!t.valid) return;
     if (t.matches.empty()) {
         term_.write("\a");  // no match: bell
