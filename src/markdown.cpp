@@ -93,6 +93,16 @@ std::vector<Inline> parse_inlines(const std::string& s) {
             buf.clear();
         }
     };
+    // A span of text can be wrapped in emphasis only when it neither starts
+    // nor ends with whitespace ("2 * 3 * 4" must stay literal).
+    auto flanked = [](const std::string& inner) {
+        return !inner.empty() && inner.front() != ' ' && inner.front() != '\t' &&
+               inner.front() != '\n' && inner.back() != ' ' && inner.back() != '\t' &&
+               inner.back() != '\n';
+    };
+    auto alnum = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)); };
+    // Intraword underscores never open emphasis, so snake_case stays intact.
+    auto underscore_opens = [&](size_t p) { return !(p > 0 && alnum(s[p - 1])); };
     size_t i = 0, n = s.size();
     while (i < n) {
         char c = s[i];
@@ -178,53 +188,90 @@ std::vector<Inline> parse_inlines(const std::string& s) {
                 }
             }
         }
-        if ((c == '*' || c == '_') && i + 1 < n && s[i + 1] == c) {
+        // ***text*** / ___text___: strong + emphasis.
+        if ((c == '*' || c == '_') && i + 2 < n && s[i + 1] == c && s[i + 2] == c &&
+            (c != '_' || underscore_opens(i))) {
+            std::string d(3, c);
+            size_t close = s.find(d, i + 3);
+            if (close != npos) {
+                std::string inner = s.substr(i + 3, close - (i + 3));
+                bool closer_ok = (c != '_') || close + 3 >= n || !alnum(s[close + 3]);
+                if (flanked(inner) && closer_ok) {
+                    flush();
+                    Inline strong;
+                    strong.kind = Inline::Strong;
+                    Inline em;
+                    em.kind = Inline::Emph;
+                    em.children = parse_inlines(inner);
+                    strong.children.push_back(std::move(em));
+                    out.push_back(std::move(strong));
+                    i = close + 3;
+                    continue;
+                }
+            }
+        }
+        if ((c == '*' || c == '_') && i + 1 < n && s[i + 1] == c &&
+            (c != '_' || underscore_opens(i))) {
             std::string d(2, c);
             size_t close = s.find(d, i + 2);
             if (close != npos) {
-                flush();
-                Inline in;
-                in.kind = Inline::Strong;
-                in.children = parse_inlines(s.substr(i + 2, close - (i + 2)));
-                out.push_back(in);
-                i = close + 2;
-                continue;
+                std::string inner = s.substr(i + 2, close - (i + 2));
+                bool closer_ok = (c != '_') || close + 2 >= n || !alnum(s[close + 2]);
+                if (flanked(inner) && closer_ok) {
+                    flush();
+                    Inline in;
+                    in.kind = Inline::Strong;
+                    in.children = parse_inlines(inner);
+                    out.push_back(std::move(in));
+                    i = close + 2;
+                    continue;
+                }
             }
         }
         if (c == '~' && i + 1 < n && s[i + 1] == '~') {
             size_t close = s.find("~~", i + 2);
-            if (close != npos) {
+            if (close != npos && flanked(s.substr(i + 2, close - (i + 2)))) {
                 flush();
                 Inline in;
                 in.kind = Inline::Strike;
                 in.children = parse_inlines(s.substr(i + 2, close - (i + 2)));
-                out.push_back(in);
+                out.push_back(std::move(in));
                 i = close + 2;
                 continue;
             }
         }
-        if (c == '*' || c == '_') {
+        if ((c == '*' || c == '_') && (c != '_' || underscore_opens(i))) {
             size_t close = s.find(c, i + 1);
             if (close != npos && close > i + 1) {
-                flush();
-                Inline in;
-                in.kind = Inline::Emph;
-                in.children = parse_inlines(s.substr(i + 1, close - (i + 1)));
-                out.push_back(in);
-                i = close + 1;
-                continue;
+                std::string inner = s.substr(i + 1, close - (i + 1));
+                bool closer_ok = (c != '_') || close + 1 >= n || !alnum(s[close + 1]);
+                if (flanked(inner) && closer_ok) {
+                    flush();
+                    Inline in;
+                    in.kind = Inline::Emph;
+                    in.children = parse_inlines(inner);
+                    out.push_back(std::move(in));
+                    i = close + 1;
+                    continue;
+                }
             }
         }
         if (c == 'h' && (s.compare(i, 7, "http://") == 0 || s.compare(i, 8, "https://") == 0)) {
             size_t j = i;
-            while (j < n && !is_space(s[j]) && s[j] != ')' && s[j] != ',') ++j;
+            while (j < n && !is_space(s[j]) && s[j] != ')' && s[j] != ',') {
+                // Trailing sentence punctuation is not part of the URL.
+                if ((s[j] == '.' || s[j] == ';' || s[j] == ':' || s[j] == '!' || s[j] == '?') &&
+                    (j + 1 >= n || is_space(s[j + 1])))
+                    break;
+                ++j;
+            }
             std::string url = s.substr(i, j - i);
             flush();
             Inline in;
             in.kind = Inline::Link;
             in.text = url;
             in.url = url;
-            out.push_back(in);
+            out.push_back(std::move(in));
             i = j;
             continue;
         }
