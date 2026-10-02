@@ -434,7 +434,7 @@ void UI::set_working(bool w) {
 void UI::tick_spinner() {
     if (working_depth_ <= 0) return;
     uint64_t now = util::steady_ms();
-    if (now - spinner_last_ms_ < 130) return;
+    if (now - spinner_last_ms_ < 300) return;
     spinner_last_ms_ = now;
     spinner_frame_ = (spinner_frame_ + 1) % 4;
     redraw();
