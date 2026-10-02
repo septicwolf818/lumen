@@ -141,7 +141,7 @@ int map_md_style(int st) {
     if (st & md::ITALIC) r |= STYLE_YELLOW;
     if (st & md::STRIKE) r |= STYLE_DIM;
     if (st & md::CODE) r |= STYLE_REVERSE;
-    if (st & md::CODE_BLOCK) r |= STYLE_REVERSE;
+    if (st & md::CODE_BLOCK) r |= STYLE_CYAN;
     if (st & md::HEADING) r |= STYLE_BOLD | STYLE_CYAN;
     if (st & md::LINK) r |= STYLE_UNDERLINE | STYLE_BLUE;
     if (st & md::QUOTE) r |= STYLE_DIM;

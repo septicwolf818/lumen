@@ -710,39 +710,91 @@ void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
     }
 }
 
-const std::vector<std::string>& keywords(const std::string& lang) {
-    static const std::vector<std::string> py = {
-        "def", "class", "return", "if", "elif", "else", "for", "while", "import", "from",
-        "as", "try", "except", "finally", "with", "lambda", "yield", "None", "True", "False",
-        "and", "or", "not", "in", "is", "pass", "break", "continue", "global", "nonlocal",
-        "raise", "assert", "async", "await", "del", "print"};
-    static const std::vector<std::string> sh = {
-        "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
-        "esac", "function", "in", "select", "time", "echo", "export", "local", "readonly",
-        "return", "exit", "set", "unset", "read", "cd", "source", "shift", "trap"};
-    static const std::vector<std::string> none;
-    if (lang == "python" || lang == "py" || lang == "python3") return py;
-    if (lang == "bash" || lang == "sh" || lang == "shell" || lang == "zsh") return sh;
-    return none;
+struct LangProfile {
+    std::vector<std::string> keywords;
+    std::string line_comment;   // starts a comment to end of line
+    bool block_comment = false; // C-style /* ... */
+    bool case_insensitive = false;
+};
+
+const LangProfile* lang_profile(const std::string& raw) {
+    std::string l = raw;
+    for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    static const LangProfile py = {
+        {"def", "class", "return", "if", "elif", "else", "for", "while", "import", "from",
+         "as", "try", "except", "finally", "with", "lambda", "yield", "None", "True", "False",
+         "and", "or", "not", "in", "is", "pass", "break", "continue", "global", "nonlocal",
+         "raise", "assert", "async", "await", "del", "match", "case", "self"},
+        "#", false, false};
+    static const LangProfile sh = {
+        {"if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
+         "esac", "function", "in", "select", "time", "echo", "export", "local", "readonly",
+         "return", "exit", "set", "unset", "read", "cd", "source", "shift", "trap", "true",
+         "false", "printf", "test"},
+        "#", false, false};
+    static const LangProfile clike = {
+        {"if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue",
+         "return", "function", "var", "let", "const", "new", "delete", "typeof", "instanceof",
+         "in", "of", "class", "extends", "import", "export", "from", "as", "try", "catch",
+         "finally", "throw", "void", "this", "super", "static", "public", "private", "protected",
+         "int", "long", "short", "unsigned", "signed", "float", "double", "char", "bool",
+         "struct", "enum", "union", "typedef", "namespace", "using", "template", "typename",
+         "auto", "true", "false", "null", "nullptr", "package", "func", "defer", "go", "chan",
+         "map", "range", "fn", "mut", "impl", "trait", "pub", "use", "match", "mod", "where",
+         "async", "await"},
+        "//", true, false};
+    static const LangProfile json = {
+        {"true", "false", "null"}, "", false, false};
+    static const LangProfile yaml = {
+        {"true", "false", "null", "yes", "no", "on", "off"}, "#", false, false};
+    static const LangProfile sql = {
+        {"select", "from", "where", "and", "or", "not", "insert", "into", "values", "update",
+         "set", "delete", "create", "table", "drop", "alter", "join", "inner", "left", "right",
+         "outer", "on", "group", "by", "order", "having", "limit", "offset", "union", "all",
+         "distinct", "as", "null", "count", "sum", "avg", "min", "max", "like", "in", "exists",
+         "between", "primary", "key", "foreign", "references", "index"},
+        "--", true, true};
+
+    if (l == "python" || l == "py" || l == "python3") return &py;
+    if (l == "bash" || l == "sh" || l == "shell" || l == "zsh") return &sh;
+    if (l == "js" || l == "javascript" || l == "ts" || l == "typescript" || l == "c" ||
+        l == "h" || l == "cpp" || l == "c++" || l == "cc" || l == "hpp" || l == "java" ||
+        l == "go" || l == "rust" || l == "rs")
+        return &clike;
+    if (l == "json") return &json;
+    if (l == "yaml" || l == "yml") return &yaml;
+    if (l == "sql") return &sql;
+    return nullptr;
 }
 
 bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
 Line highlight(const std::string& line, const std::string& lang) {
     Line out;
-    const std::vector<std::string>& kw = keywords(lang);
-    if (kw.empty()) {
+    const LangProfile* p = lang_profile(lang);
+    if (!p) {
         out.push_back({line, CODE_BLOCK});
         return out;
     }
+    auto is_keyword = [&](std::string w) {
+        if (p->case_insensitive)
+            for (char& c : w) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return std::find(p->keywords.begin(), p->keywords.end(), w) != p->keywords.end();
+    };
+
     size_t i = 0, n = line.size();
     while (i < n) {
-        char c = line[i];
-        if (c == '#') {
+        if (!p->line_comment.empty() && line.compare(i, p->line_comment.size(), p->line_comment) == 0) {
             out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
             break;
         }
-        if (c == '"' || c == '\'') {
+        if (p->block_comment && line.compare(i, 2, "/*") == 0) {
+            out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
+            break;
+        }
+        char c = line[i];
+        if (c == '"' || c == '\'' || c == '`') {
             char q = c;
             size_t j = i + 1;
             while (j < n && line[j] != q) {
@@ -756,7 +808,9 @@ Line highlight(const std::string& line, const std::string& lang) {
         }
         if (std::isdigit(static_cast<unsigned char>(c))) {
             size_t j = i;
-            while (j < n && (std::isdigit(static_cast<unsigned char>(line[j])) || line[j] == '.')) ++j;
+            while (j < n && (std::isalnum(static_cast<unsigned char>(line[j])) || line[j] == '.' ||
+                             line[j] == '_'))
+                ++j;
             out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_NUMBER});
             i = j;
             continue;
@@ -766,7 +820,7 @@ Line highlight(const std::string& line, const std::string& lang) {
             while (j < n && ident_char(line[j])) ++j;
             std::string w = line.substr(i, j - i);
             int style = CODE_BLOCK;
-            if (std::find(kw.begin(), kw.end(), w) != kw.end())
+            if (is_keyword(w))
                 style |= SYN_KEYWORD;
             else if (j < n && line[j] == '(')
                 style |= SYN_FUNCTION;
@@ -892,13 +946,21 @@ void render_block(const Block& b, int width, Lines& out) {
             break;
         }
         case Block::Code: {
+            // Full-width header naming the language, e.g. "python ------...".
+            std::string header = b.lang.empty() ? "code" : b.lang;
+            size_t hlen = utf8_len(header);
+            out.push_back(Line{{header, CODE_BLOCK | MARKER}});
+            if (hlen + 1 < static_cast<size_t>(width))
+                out.push_back(Line{{std::string(static_cast<size_t>(width) - hlen - 1, '-'),
+                                    MARKER}});
+
             auto raw = split_lines(b.text);
             for (auto& rl : raw) {
+                size_t pos = 0;
                 if (rl.empty()) {
-                    out.push_back(Line{{"", CODE_BLOCK}});
+                    out.push_back(Line{});
                     continue;
                 }
-                size_t pos = 0;
                 while (pos < rl.size()) {
                     std::string chunk;
                     size_t cnt = 0;
@@ -909,11 +971,7 @@ void render_block(const Block& b, int width, Lines& out) {
                         pos += l;
                         ++cnt;
                     }
-                    Line hl = highlight(chunk, b.lang);
-                    size_t used = utf8_len(chunk);
-                    if (used < static_cast<size_t>(width))
-                        hl.push_back({std::string(static_cast<size_t>(width) - used, ' '), CODE_BLOCK});
-                    out.push_back(std::move(hl));
+                    out.push_back(highlight(chunk, b.lang));
                 }
             }
             break;
