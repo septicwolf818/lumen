@@ -946,13 +946,15 @@ void render_block(const Block& b, int width, Lines& out) {
             break;
         }
         case Block::Code: {
-            // Full-width header naming the language, e.g. "python ------...".
+            // Full-width rule with the language inline, e.g. "python ------...".
             std::string header = b.lang.empty() ? "code" : b.lang;
             size_t hlen = utf8_len(header);
-            out.push_back(Line{{header, CODE_BLOCK | MARKER}});
+            Line rule;
+            rule.push_back({header, CODE_BLOCK | MARKER});
+            rule.push_back({" ", MARKER});
             if (hlen + 1 < static_cast<size_t>(width))
-                out.push_back(Line{{std::string(static_cast<size_t>(width) - hlen - 1, '-'),
-                                    MARKER}});
+                rule.push_back({std::string(static_cast<size_t>(width) - hlen - 1, '-'), MARKER});
+            out.push_back(std::move(rule));
 
             auto raw = split_lines(b.text);
             for (auto& rl : raw) {
