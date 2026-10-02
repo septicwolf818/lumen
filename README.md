@@ -187,7 +187,8 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
   driven by keyword data in [`data/keywords.json`](data/keywords.json),
   regenerated with `tools/gen_keyword_data.py`
 - ATX headings, unordered/ordered lists, blockquotes and thematic breaks
-- GFM-style tables with `+`/`-`/`|` borders and per-column alignment
+- GFM-style tables with `+`/`-`/`|` borders and per-column alignment, including
+  syntax-highlighted code in cells (`python: ...`, or a fenced snippet)
 - links rendered as `text (url)`
 
 Blocks are rendered as they stream: a fenced code block is highlighted from the

@@ -82,6 +82,10 @@ Inline text_node(const std::string& t) {
 
 std::vector<Inline> parse_inlines(const std::string& s);
 
+// Defined near the code lexer below; declared here for inline-code language
+// detection during parsing.
+bool lang_known(const std::string& raw);
+
 bool escape_char(char c) {
     static const std::string special = "\\`*_{}[]()#+-.!>~|";
     return special.find(c) != npos;
@@ -148,8 +152,20 @@ std::vector<Inline> parse_inlines(const std::string& s) {
                 flush();
                 Inline in;
                 in.kind = Inline::Code;
+                // Optional language hint: "```python code```" or "`python: code`".
+                // Only split when the leading token is a known language, so
+                // ordinary code like `a: b` is left untouched.
+                size_t sep = content.find_first_of(": \t");
+                if (sep != npos && sep > 0) {
+                    std::string lang = content.substr(0, sep);
+                    if (lang_known(lang)) {
+                        in.lang = lang;
+                        size_t rest = content.find_first_not_of(": \t", sep);
+                        content = (rest == npos) ? std::string() : content.substr(rest);
+                    }
+                }
                 in.text = content;
-                out.push_back(in);
+                out.push_back(std::move(in));
                 i = close + run;
                 continue;
             }
@@ -693,6 +709,9 @@ void put_text(WrapState& s, const std::string& t, int style) {
     }
 }
 
+// Forward declaration: the code lexer is defined after the inline renderer.
+Line highlight(const std::string& line, const std::string& lang, bool& in_block);
+
 void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
     for (const auto& x : in) {
         switch (x.kind) {
@@ -700,7 +719,28 @@ void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
             case Inline::Emph: render_inlines(x.children, s, style | ITALIC); break;
             case Inline::Strong: render_inlines(x.children, s, style | BOLD); break;
             case Inline::Strike: render_inlines(x.children, s, style | STRIKE); break;
-            case Inline::Code: put_text(s, x.text, style | CODE); break;
+            case Inline::Code:
+                // A language-tagged inline span (inside a table cell or a
+                // paragraph) is highlighted with the code lexer, one source
+                // line at a time so multi-line snippets keep comment state.
+                if (!x.lang.empty()) {
+                    bool in_block = false;
+                    std::string rest = x.text;
+                    size_t start = 0;
+                    while (start <= rest.size()) {
+                        size_t nl = rest.find('\n', start);
+                        std::string line = (nl == npos) ? rest.substr(start)
+                                                        : rest.substr(start, nl - start);
+                        for (const auto& sp : highlight(line, x.lang, in_block))
+                            put_text(s, sp.text, sp.style);
+                        if (nl == npos) break;
+                        s.newline();
+                        start = nl + 1;
+                    }
+                } else {
+                    put_text(s, x.text, style | CODE);
+                }
+                break;
             case Inline::Link:
                 put_text(s, x.text, style | LINK);
                 if (!x.url.empty() && x.url != x.text) {
@@ -722,6 +762,8 @@ const LangProfile* lang_profile(const std::string& raw) {
     for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return detail::lookup_language(l);
 }
+
+bool lang_known(const std::string& raw) { return lang_profile(raw) != nullptr; }
 
 bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 

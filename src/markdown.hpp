@@ -54,6 +54,7 @@ struct Inline {
     enum Kind { Text, Emph, Strong, Strike, Code, Link, Break } kind = Text;
     std::string text;                  // literal, or link/image label
     std::string url;                   // Link only
+    std::string lang;                  // Code only: optional language hint
     std::vector<Inline> children;      // emphasis/strong/strike/link
 };
 
