@@ -163,12 +163,7 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
 
-    // Dim mode (thinking blocks): keep the foreground colours so the syntax is
-    // still readable, but drop bold/underline/reverse and force dim.
-    if (dim) {
-        r &= ~(STYLE_BOLD | STYLE_UNDERLINE | STYLE_REVERSE);
-        r |= STYLE_DIM;
-    }
+    if (dim) r |= STYLE_DIM;
     return r;
 }
 
@@ -360,7 +355,7 @@ void UI::stream_token(const std::string& tok) {
     // Render Markdown live so code fences are highlighted as they stream. The
     // parser is safe on partial input: an unclosed fence renders as a code
     // block and half-typed emphasis stays literal, so nothing jumps around.
-    // Thinking blocks (STYLE_DIM) render the same way, forced dim.
+    // Thinking blocks (STYLE_DIM) use the same renderer with dim overlaid.
     std::vector<DisplayLine> wrapped;
     if (markdown_)
         wrapped = render_markdown(stream_acc_, std::max(10, term_.cols()),
