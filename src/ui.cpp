@@ -146,8 +146,10 @@ int map_md_style(int st) {
     if (st & md::MARKER) r |= STYLE_DIM;
 
     // Code block syntax colours. Each token category gets its own attribute so
-    // the block reads like a real editor even on a plain Linux console.
-    if (st & md::CODE_BLOCK) r |= STYLE_CYAN;  // default code text
+    // the block reads like a real editor on a plain Linux console. CODE_BLOCK is
+    // the guaranteed base colour: if the keyword data fails to load, spans carry
+    // only CODE_BLOCK and code still renders in cyan with no syntax colouring.
+    if (st & md::CODE_BLOCK) r |= STYLE_CYAN;  // default / fallback code text
     if (st & md::SYN_KEYWORD) r |= STYLE_BOLD | STYLE_BLUE;
     if (st & md::SYN_CONSTANT) r |= STYLE_BOLD | STYLE_MAGENTA;
     if (st & md::SYN_TYPE) r |= STYLE_YELLOW;

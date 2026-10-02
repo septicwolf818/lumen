@@ -30,6 +30,7 @@ add_executable(lumen
     src/input.cpp
     src/ui.cpp
     src/markdown.cpp
+    src/keywords.cpp
     src/ollama.cpp
     src/session.cpp
     src/tools.cpp
@@ -39,6 +40,8 @@ add_executable(lumen
 )
 add_dependencies(lumen keywords_data)
 
+# The binary dir is on the include path only so src/keywords.cpp can include the
+# generated keywords_data.inc; the rest of the tree compiles without it.
 target_include_directories(lumen PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/include

@@ -1,14 +1,11 @@
 #include "markdown.hpp"
 
-#include "json.hpp"
+#include "keywords_internal.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
-#include <map>
 #include <string>
-
-#include "keywords_data.inc"  // generated: kKeywordsJson
 
 namespace md {
 namespace {
@@ -716,82 +713,14 @@ void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
     }
 }
 
-struct LangProfile {
-    std::vector<std::string> keywords;
-    std::vector<std::string> types;
-    std::vector<std::string> constants;   // booleans, None/null, ...
-    std::vector<std::string> builtins;    // built-in function names
-    std::string line_comment;             // starts a comment to end of line
-    bool block_comment = false;           // C-style /* ... */
-    bool case_insensitive = false;
-    bool python_like = false;             // '#': preprocessor/decorator
-};
+using detail::LangProfile;
 
-// Comment/flag metadata that is not part of the language keyword data.
-struct LangSyntax {
-    std::string line_comment;
-    bool block_comment;
-    bool case_insensitive;
-    bool python_like;
-};
-
-std::vector<std::string> json_strings(const nlohmann::json& j) {
-    std::vector<std::string> out;
-    if (j.is_array())
-        for (const auto& e : j)
-            if (e.is_string()) out.push_back(e.get<std::string>());
-    return out;
-}
-
-// Language profile tables are built once from the embedded keyword data
-// (data/keywords.json). Lexer syntax rules - comment markers and the C-style
-// block comment - stay here because they are not keyword data.
-const std::map<std::string, LangProfile>& profiles() {
-    static const std::map<std::string, LangProfile> table = [] {
-        std::map<std::string, LangProfile> t;
-        nlohmann::json j = nlohmann::json::parse(kKeywordsJson, nullptr, false);
-        if (j.is_discarded() || !j.contains("languages")) return t;
-
-        auto syntax_for = [](const std::string& name) -> LangSyntax {
-            if (name == "python") return {"#", false, false, true};
-            if (name == "bash") return {"#", false, false, true};
-            if (name == "clike") return {"//", true, false, false};
-            if (name == "yaml") return {"#", false, false, true};
-            if (name == "sql") return {"--", true, true, false};
-            return {"", false, false, false};  // json
-        };
-
-        for (auto it = j["languages"].begin(); it != j["languages"].end(); ++it) {
-            const std::string& name = it.key();
-            const nlohmann::json& v = it.value();
-
-            LangProfile p;
-            p.keywords = json_strings(v.value("keywords", nlohmann::json::array()));
-            p.types = json_strings(v.value("types", nlohmann::json::array()));
-            p.constants = json_strings(v.value("constants", nlohmann::json::array()));
-            p.builtins = json_strings(v.value("builtins", nlohmann::json::array()));
-            LangSyntax s = syntax_for(name);
-            p.line_comment = s.line_comment;
-            p.block_comment = s.block_comment;
-            p.case_insensitive = s.case_insensitive;
-            p.python_like = s.python_like;
-
-            t[name] = p;
-            // Register every alias pointing at the same profile.
-            for (const auto& a : json_strings(v.value("aliases", nlohmann::json::array())))
-                t[a] = p;
-        }
-        return t;
-    }();
-    return table;
-}
-
+// Lower-case the fence info string and resolve it via the embedded keyword
+// data. Unknown languages return nullptr (rendered as a plain code block).
 const LangProfile* lang_profile(const std::string& raw) {
     std::string l = raw;
     for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    const auto& t = profiles();
-    auto it = t.find(l);
-    return it == t.end() ? nullptr : &it->second;
+    return detail::lookup_language(l);
 }
 
 bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
