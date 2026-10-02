@@ -35,8 +35,10 @@ void apply_syntax(const nlohmann::json& v, LangProfile& p) {
     const auto& s = v["syntax"];
     if (s.contains("line_comment") && s["line_comment"].is_string())
         p.line_comment = s["line_comment"].get<std::string>();
-    if (s.contains("block_comment") && s["block_comment"].is_boolean())
-        p.block_comment = s["block_comment"].get<bool>();
+    if (s.contains("block_open") && s["block_open"].is_string())
+        p.block_comment_open = s["block_open"].get<std::string>();
+    if (s.contains("block_close") && s["block_close"].is_string())
+        p.block_comment_close = s["block_close"].get<std::string>();
     if (s.contains("case_insensitive") && s["case_insensitive"].is_boolean())
         p.case_insensitive = s["case_insensitive"].get<bool>();
     if (s.contains("hash") && s["hash"].is_boolean())

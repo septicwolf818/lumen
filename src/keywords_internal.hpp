@@ -17,7 +17,8 @@ struct LangProfile {
     std::vector<std::string> constants;  // booleans, None/null, ...
     std::vector<std::string> builtins;   // built-in function names
     std::string line_comment;            // starts a comment to end of line
-    bool block_comment = false;          // C-style /* ... */
+    std::string block_comment_open;      // multi-line comment start, e.g. "/*"
+    std::string block_comment_close;     // multi-line comment end, e.g. "*/"
     bool case_insensitive = false;
     bool python_like = false;            // '#': preprocessor/decorator
 };

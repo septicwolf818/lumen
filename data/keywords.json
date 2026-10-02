@@ -95,7 +95,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -241,7 +242,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -381,7 +383,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -449,7 +452,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -493,7 +497,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       }
@@ -538,7 +543,8 @@
       ],
       "syntax": {
         "line_comment": "%",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": false
       }
@@ -647,7 +653,8 @@
       ],
       "syntax": {
         "line_comment": "!",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": true,
         "hash": false
       }
@@ -732,7 +739,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -834,7 +842,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -941,7 +950,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -1072,7 +1082,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -1112,7 +1123,8 @@
       ],
       "syntax": {
         "line_comment": "--",
-        "block_comment": false,
+        "block_open": "--[[",
+        "block_close": "]]",
         "case_insensitive": false,
         "hash": false
       }
@@ -1232,7 +1244,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -1343,7 +1356,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       }
@@ -1396,7 +1410,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       }
@@ -1487,7 +1502,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "=begin",
+        "block_close": "=end",
         "case_insensitive": false,
         "hash": true
       }
@@ -1601,7 +1617,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -1695,7 +1712,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -1844,7 +1862,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       }
@@ -2014,7 +2033,8 @@
       ],
       "syntax": {
         "line_comment": "'",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": true,
         "hash": false
       },
@@ -2052,7 +2072,8 @@
       "keywords": [],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       },
@@ -2097,7 +2118,8 @@
       "keywords": [],
       "syntax": {
         "line_comment": "",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": false
       },
@@ -2115,7 +2137,8 @@
       "keywords": [],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       },
@@ -2136,7 +2159,8 @@
       "keywords": [],
       "syntax": {
         "line_comment": "--",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": true,
         "hash": false
       },
@@ -2220,7 +2244,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": false
       },
@@ -2418,7 +2443,8 @@
       ],
       "syntax": {
         "line_comment": "--",
-        "block_comment": true,
+        "block_open": "{-",
+        "block_close": "-}",
         "case_insensitive": false,
         "hash": false
       },
@@ -2585,7 +2611,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       },
@@ -2860,7 +2887,8 @@
       ],
       "syntax": {
         "line_comment": ";",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": false
       },
@@ -3132,7 +3160,8 @@
       ],
       "syntax": {
         "line_comment": "",
-        "block_comment": true,
+        "block_open": "<!--",
+        "block_close": "-->",
         "case_insensitive": false,
         "hash": false
       }
@@ -3373,7 +3402,8 @@
       ],
       "syntax": {
         "line_comment": "",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       },
@@ -3538,7 +3568,8 @@
       ],
       "syntax": {
         "line_comment": "//",
-        "block_comment": true,
+        "block_open": "/*",
+        "block_close": "*/",
         "case_insensitive": false,
         "hash": false
       },
@@ -3619,7 +3650,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": true,
+        "block_open": "<#",
+        "block_close": "#>",
         "case_insensitive": true,
         "hash": true
       },
@@ -3718,7 +3750,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": false,
+        "block_open": "",
+        "block_close": "",
         "case_insensitive": false,
         "hash": true
       },
@@ -3838,7 +3871,8 @@
       ],
       "syntax": {
         "line_comment": "",
-        "block_comment": true,
+        "block_open": "(*",
+        "block_close": "*)",
         "case_insensitive": false,
         "hash": false
       },
@@ -3910,7 +3944,8 @@
       ],
       "syntax": {
         "line_comment": "#",
-        "block_comment": true,
+        "block_open": "#=",
+        "block_close": "=#",
         "case_insensitive": false,
         "hash": true
       },

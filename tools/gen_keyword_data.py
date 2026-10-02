@@ -62,45 +62,47 @@ def clean(token):
 
 
 # Language syntax metadata: comment markers / flags per profile.
+#   line:  single-line comment marker ("" = none)
+#   bopen/bclose: multi-line comment delimiters ("" = none)
+#   ci:    keywords are case-insensitive
+#   hash:  '#'-based preprocessor/decorator highlighting
 SYNTAX = {
-    "python":     {"line": "#", "block": False, "ci": False, "hash": True},
-    "ruby":       {"line": "#", "block": False, "ci": False, "hash": True},
-    "bash":       {"line": "#", "block": False, "ci": False, "hash": True},
-    "yaml":       {"line": "#", "block": False, "ci": False, "hash": True},
-    "r":          {"line": "#", "block": False, "ci": False, "hash": True},
-    "elixir":     {"line": "#", "block": False, "ci": False, "hash": True},
-    "perl":       {"line": "#", "block": False, "ci": False, "hash": True},
-    "php":        {"line": "//", "block": True, "ci": False, "hash": False},
-    "cpp":        {"line": "//", "block": True, "ci": False, "hash": False},
-    "c":          {"line": "//", "block": True, "ci": False, "hash": False},
-    "csharp":     {"line": "//", "block": True, "ci": False, "hash": False},
-    "java":       {"line": "//", "block": True, "ci": False, "hash": False},
-    "javascript": {"line": "//", "block": True, "ci": False, "hash": False},
-    "typescript": {"line": "//", "block": True, "ci": False, "hash": False},
-    "go":         {"line": "//", "block": True, "ci": False, "hash": False},
-    "rust":       {"line": "//", "block": True, "ci": False, "hash": False},
-    "swift":      {"line": "//", "block": True, "ci": False, "hash": False},
-    "kotlin":     {"line": "//", "block": True, "ci": False, "hash": False},
-    "scala":      {"line": "//", "block": True, "ci": False, "hash": False},
-    "dart":       {"line": "//", "block": True, "ci": False, "hash": False},
-    "zig":        {"line": "//", "block": False, "ci": False, "hash": False},
-    "haskell":    {"line": "--", "block": True, "ci": False, "hash": False},
-    "perl":       {"line": "#", "block": False, "ci": False, "hash": True},
-    "clojure":    {"line": ";", "block": False, "ci": False, "hash": False},
-    "html":       {"line": "", "block": True, "ci": False, "hash": False},
-    "css":        {"line": "", "block": True, "ci": False, "hash": False},
-    "groovy":     {"line": "//", "block": True, "ci": False, "hash": False},
-    "powershell": {"line": "#", "block": True, "ci": True, "hash": True},
-    "gdscript":   {"line": "#", "block": False, "ci": False, "hash": True},
-    "vbnet":      {"line": "'", "block": False, "ci": True, "hash": False},
-    "ocaml":      {"line": "", "block": True, "ci": False, "hash": False},
-    "julia":      {"line": "#", "block": True, "ci": False, "hash": True},
-    "fortran":    {"line": "!", "block": False, "ci": True, "hash": False},
-    "erl":        {"line": "%", "block": False, "ci": False, "hash": False},
-    "erlang":     {"line": "%", "block": False, "ci": False, "hash": False},
-    "lua":        {"line": "--", "block": False, "ci": False, "hash": False},
-    "sql":        {"line": "--", "block": True, "ci": True, "hash": False},
-    "json":       {"line": "", "block": False, "ci": False, "hash": False},
+    "python":     {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "ruby":       {"line": "#",  "bopen": "=begin", "bclose": "=end", "ci": False, "hash": True},
+    "bash":       {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "yaml":       {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "r":          {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "elixir":     {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "perl":       {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "php":        {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "cpp":        {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "c":          {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "csharp":     {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "java":       {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "javascript": {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "typescript": {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "go":         {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "rust":       {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "swift":      {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "kotlin":     {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "scala":      {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "dart":       {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "zig":        {"line": "//", "bopen": "",    "bclose": "",    "ci": False, "hash": False},
+    "haskell":    {"line": "--", "bopen": "{-",  "bclose": "-}",  "ci": False, "hash": False},
+    "clojure":    {"line": ";",  "bopen": "",    "bclose": "",    "ci": False, "hash": False},
+    "html":       {"line": "",   "bopen": "<!--", "bclose": "-->", "ci": False, "hash": False},
+    "css":        {"line": "",   "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "groovy":     {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "powershell": {"line": "#",  "bopen": "<#",  "bclose": "#>",  "ci": True,  "hash": True},
+    "gdscript":   {"line": "#",  "bopen": "",    "bclose": "",    "ci": False, "hash": True},
+    "vbnet":      {"line": "'",  "bopen": "",    "bclose": "",    "ci": True,  "hash": False},
+    "ocaml":      {"line": "",   "bopen": "(*",  "bclose": "*)",  "ci": False, "hash": False},
+    "julia":      {"line": "#",  "bopen": "#=",  "bclose": "=#",  "ci": False, "hash": True},
+    "fortran":    {"line": "!",  "bopen": "",    "bclose": "",    "ci": True,  "hash": False},
+    "erlang":     {"line": "%",  "bopen": "",    "bclose": "",    "ci": False, "hash": False},
+    "lua":        {"line": "--", "bopen": "--[[", "bclose": "]]", "ci": False, "hash": False},
+    "sql":        {"line": "--", "bopen": "/*",  "bclose": "*/",  "ci": True,  "hash": False},
+    "json":       {"line": "",   "bopen": "",    "bclose": "",    "ci": False, "hash": False},
 }
 
 # Extra per-language layers that are not keywords. Kept intentionally small and
@@ -571,6 +573,17 @@ EXTRA_LANGUAGES = {
 }
 
 
+def syntax_entry(name):
+    s = SYNTAX.get(name, {"line": "", "bopen": "", "bclose": "", "ci": False, "hash": False})
+    return {
+        "line_comment": s["line"],
+        "block_open": s["bopen"],
+        "block_close": s["bclose"],
+        "case_insensitive": s["ci"],
+        "hash": s["hash"],
+    }
+
+
 def build(upstream):
     languages = {}
     for profile, keywords in upstream.items():
@@ -583,12 +596,7 @@ def build(upstream):
             entry["builtins"] = BUILTINS[profile]
         syn = SYNTAX.get(profile)
         if syn:
-            entry["syntax"] = {
-                "line_comment": syn["line"],
-                "block_comment": syn["block"],
-                "case_insensitive": syn["ci"],
-                "hash": syn["hash"],
-            }
+            entry["syntax"] = syntax_entry(profile)
         languages[profile] = entry
 
     # Aliases that don't map to an upstream section (shell, json, yaml, sql).
@@ -601,9 +609,7 @@ def build(upstream):
     for name, tmpl in extra.items():
         if name in languages:
             continue
-        entry = {"aliases": ALIASES[name], "keywords": [], "syntax": {
-            "line_comment": SYNTAX[name]["line"], "block_comment": SYNTAX[name]["block"],
-            "case_insensitive": SYNTAX[name]["ci"], "hash": SYNTAX[name]["hash"]}}
+        entry = {"aliases": ALIASES[name], "keywords": [], "syntax": syntax_entry(name)}
         if name in CONSTANTS:
             entry["constants"] = CONSTANTS[name]
         if name in BUILTINS:
@@ -612,16 +618,10 @@ def build(upstream):
 
     # Curated languages not available upstream.
     for name, data in EXTRA_LANGUAGES.items():
-        syn = SYNTAX.get(name, {"line": "", "block": False, "ci": False, "hash": False})
         entry = {
             "aliases": data.get("aliases", [name]),
             "keywords": data.get("keywords", []),
-            "syntax": {
-                "line_comment": syn["line"],
-                "block_comment": syn["block"],
-                "case_insensitive": syn["ci"],
-                "hash": syn["hash"],
-            },
+            "syntax": syntax_entry(name),
         }
         for key in ("types", "constants", "builtins"):
             if data.get(key):

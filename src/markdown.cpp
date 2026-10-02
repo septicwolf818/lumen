@@ -733,13 +733,18 @@ bool in_list(const std::vector<std::string>& v, std::string w, bool ci) {
 
 // Tokenize one line of code into styled spans. Identifier classification:
 // keyword > constant > type > builtin > function (followed by '(') > variable.
-Line highlight(const std::string& line, const std::string& lang) {
+// in_block carries the multi-line comment state across lines: true means the
+// line starts inside a block comment, and it is updated to reflect how the line
+// ends.
+Line highlight(const std::string& line, const std::string& lang, bool& in_block) {
     Line out;
     const LangProfile* p = lang_profile(lang);
     if (!p) {
         out.push_back({line, CODE_BLOCK});
         return out;
     }
+    const bool has_block = !p->block_comment_open.empty() && !p->block_comment_close.empty();
+    const bool has_line = !p->line_comment.empty();
     bool ci = p->case_insensitive;
     auto is_kw = [&](const std::string& w) { return in_list(p->keywords, w, ci); };
     auto is_const = [&](const std::string& w) { return in_list(p->constants, w, ci); };
@@ -749,7 +754,39 @@ Line highlight(const std::string& line, const std::string& lang) {
     size_t i = 0, n = line.size();
     bool at_line_start = true;  // preprocessor for '#' languages
     while (i < n) {
+        // Continuing a block comment from a previous line.
+        if (in_block) {
+            size_t close = has_block ? line.find(p->block_comment_close, i) : npos;
+            if (close == npos) {
+                out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
+                return out;
+            }
+            size_t end = close + p->block_comment_close.size();
+            out.push_back({line.substr(i, end - i), CODE_BLOCK | SYN_COMMENT});
+            i = end;
+            in_block = false;
+            at_line_start = false;
+            continue;
+        }
+
         char c = line[i];
+
+        // A block comment opener: consume to its close (same line) or to EOL.
+        if (has_block && line.compare(i, p->block_comment_open.size(),
+                                      p->block_comment_open) == 0) {
+            size_t close = line.find(p->block_comment_close,
+                                     i + p->block_comment_open.size());
+            if (close == npos) {
+                out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
+                in_block = true;
+                return out;
+            }
+            size_t end = close + p->block_comment_close.size();
+            out.push_back({line.substr(i, end - i), CODE_BLOCK | SYN_COMMENT});
+            i = end;
+            at_line_start = false;
+            continue;
+        }
 
         // Preprocessor directive for '#' languages (Python decorators too).
         if (p->python_like && c == '#' && at_line_start) {
@@ -763,12 +800,7 @@ Line highlight(const std::string& line, const std::string& lang) {
             i = j;
             continue;
         }
-        if (!p->line_comment.empty() &&
-            line.compare(i, p->line_comment.size(), p->line_comment) == 0) {
-            out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
-            break;
-        }
-        if (p->block_comment && line.compare(i, 2, "/*") == 0) {
+        if (has_line && line.compare(i, p->line_comment.size(), p->line_comment) == 0) {
             out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
             break;
         }
@@ -821,11 +853,19 @@ Line highlight(const std::string& line, const std::string& lang) {
             at_line_start = false;
             continue;
         }
-        // Operators and punctuation.
+        // Operators and punctuation, but never swallow the start of a block
+        // comment opener (e.g. HTML "<!--" would otherwise be eaten as a run
+        // of operator characters).
         static const std::string ops = "+-*/%=<>!&|^~?:.#@";
         if (ops.find(c) != std::string::npos) {
             size_t j = i;
-            while (j < n && ops.find(line[j]) != std::string::npos) ++j;
+            while (j < n && ops.find(line[j]) != std::string::npos) {
+                if (has_block && j > i &&
+                    line.compare(j, p->block_comment_open.size(),
+                                 p->block_comment_open) == 0)
+                    break;
+                ++j;
+            }
             out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_OPERATOR});
             i = j;
             at_line_start = false;
@@ -961,12 +1001,14 @@ void render_block(const Block& b, int width, Lines& out) {
             out.push_back(std::move(rule));
 
             auto raw = split_lines(b.text);
+            bool in_block = false;  // multi-line comment state across source lines
             for (auto& rl : raw) {
                 size_t pos = 0;
                 if (rl.empty()) {
                     out.push_back(Line{});
                     continue;
                 }
+                bool first_chunk = true;
                 while (pos < rl.size()) {
                     std::string chunk;
                     size_t cnt = 0;
@@ -977,7 +1019,13 @@ void render_block(const Block& b, int width, Lines& out) {
                         pos += l;
                         ++cnt;
                     }
-                    out.push_back(highlight(chunk, b.lang));
+                    // Only the first chunk of a source line continues the
+                    // previous line's comment state; wrapped continuation
+                    // chunks are treated as fresh line text.
+                    bool carry = first_chunk && in_block;
+                    out.push_back(highlight(chunk, b.lang, carry));
+                    if (first_chunk) in_block = carry;
+                    first_chunk = false;
                 }
             }
             break;
