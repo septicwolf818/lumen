@@ -52,7 +52,9 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
         try {
             auto j = nlohmann::json::parse(line);
             if (j.contains("error")) {
-                ctx->error = j["error"].get<std::string>();
+                ctx->error = j["error"].is_string()
+                                 ? j["error"].get<std::string>()
+                                 : j["error"].dump();
                 continue;
             }
             if (j.contains("message") && j["message"].is_object()) {
@@ -72,21 +74,45 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                     }
                 }
                 if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
-                    // Ollama may send tool_calls in chunks or complete
+                    // Ollama sends complete tool calls (several may share one
+                    // chunk, without an index); OpenAI-style streams fragment
+                    // them and tag each piece with an index. Fragments merge by
+                    // index; a nameless piece continues the newest slot; a
+                    // named piece without an index starts a new slot - so a
+                    // multi-tool response is never fused into one corrupted
+                    // entry with concatenated arguments.
                     for (auto& tc : msg["tool_calls"]) {
-                        // merge by index if present
-                        size_t idx = 0;
-                        if (tc.contains("index") && tc["index"].is_number())
-                            idx = tc["index"].get<size_t>();
+                        bool has_index =
+                            tc.contains("index") && tc["index"].is_number();
+                        bool named =
+                            tc.contains("function") && tc["function"].is_object() &&
+                            tc["function"].contains("name") &&
+                            tc["function"]["name"].is_string() &&
+                            !tc["function"]["name"].get<std::string>().empty();
+                        size_t idx;
+                        if (has_index) {
+                            int64_t i = tc["index"].get<int64_t>();
+                            // refuse absurd indexes - each one pre-allocates a slot
+                            if (i < 0 || i > 63) continue;
+                            idx = static_cast<size_t>(i);
+                        } else if (named && !ctx->tool_calls.empty() &&
+                                   ctx->tool_calls.back().contains("function") &&
+                                   ctx->tool_calls.back()["function"].contains("name")) {
+                            idx = ctx->tool_calls.size();  // next complete call
+                        } else {
+                            idx = ctx->tool_calls.empty() ? 0
+                                                          : ctx->tool_calls.size() - 1;
+                        }
                         while (ctx->tool_calls.size() <= idx)
                             ctx->tool_calls.push_back(nlohmann::json::object());
                         auto& dest = ctx->tool_calls[idx];
                         if (tc.contains("id")) dest["id"] = tc["id"];
                         if (tc.contains("type")) dest["type"] = tc["type"];
-                        if (tc.contains("function")) {
+                        if (tc.contains("function") && tc["function"].is_object()) {
                             if (!dest.contains("function")) dest["function"] = nlohmann::json::object();
                             auto& fn = tc["function"];
-                            if (fn.contains("name") && !fn["name"].get<std::string>().empty())
+                            if (fn.contains("name") && fn["name"].is_string() &&
+                                !fn["name"].get<std::string>().empty())
                                 dest["function"]["name"] = fn["name"];
                             if (fn.contains("arguments")) {
                                 // arguments may arrive as incremental string
@@ -121,8 +147,10 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                         // only include complete tool calls
                         nlohmann::json cleaned = nlohmann::json::array();
                         for (auto& tc : ctx->tool_calls) {
-                            if (tc.contains("function") && tc["function"].contains("name")
-                                && !tc["function"]["name"].get<std::string>().empty()) {
+                            if (tc.contains("function") && tc["function"].is_object() &&
+                                tc["function"].contains("name") &&
+                                tc["function"]["name"].is_string() &&
+                                !tc["function"]["name"].get<std::string>().empty()) {
                                 cleaned.push_back(tc);
                             }
                         }
@@ -174,11 +202,15 @@ std::optional<std::vector<OllamaModel>> OllamaClient::list_models(std::string* e
         if (j.contains("models") && j["models"].is_array()) {
             for (auto& m : j["models"]) {
                 OllamaModel om;
-                if (m.contains("name")) om.name = m["name"].get<std::string>();
-                if (m.contains("model")) om.model = m["model"].get<std::string>();
+                if (m.contains("name") && m["name"].is_string())
+                    om.name = m["name"].get<std::string>();
+                if (m.contains("model") && m["model"].is_string())
+                    om.model = m["model"].get<std::string>();
                 else om.model = om.name;
-                if (m.contains("size")) om.size = m["size"].get<int64_t>();
-                if (m.contains("modified_at")) om.modified = m["modified_at"].get<std::string>();
+                if (m.contains("size") && m["size"].is_number())
+                    om.size = m["size"].get<int64_t>();
+                if (m.contains("modified_at") && m["modified_at"].is_string())
+                    om.modified = m["modified_at"].get<std::string>();
                 models.push_back(om);
             }
         }

@@ -4,38 +4,53 @@
 #include <cstdlib>
 
 void Config::load() {
-    // Environment overrides URL
-    if (const char* env = std::getenv("OLLAMA_HOST")) {
-        if (*env) {
-            std::string u = env;
-            if (u.find("://") == std::string::npos) {
-                u = "http://" + u;
-            }
-            ollama_url = u;
-        }
-    }
-    if (const char* env = std::getenv("OLLAMA_URL")) {
-        if (*env) ollama_url = env;
-    }
-
     std::string path = util::config_dir() + "/config.json";
     std::ifstream in(path);
-    if (!in) return;
-    try {
-        nlohmann::json j;
-        in >> j;
-        from_json(j);
-    } catch (...) {
-        // ignore malformed
+    if (in) {
+        try {
+            nlohmann::json j;
+            in >> j;
+            from_json(j);
+        } catch (...) {
+            // ignore malformed
+        }
     }
+
+    // Environment overrides the URL from the file - applied after the load,
+    // otherwise the file value always wins and the override never works.
+    auto env_url = [this](const char* name) {
+        const char* env = std::getenv(name);
+        if (!env || !*env) return;
+        std::string u = env;
+        if (u.find("://") == std::string::npos) u = "http://" + u;
+        ollama_url = u;
+    };
+    env_url("OLLAMA_HOST");
+    env_url("OLLAMA_URL");
 }
 
 void Config::save() const {
     util::ensure_dir(util::config_dir());
     std::string path = util::config_dir() + "/config.json";
-    std::ofstream out(path);
-    if (!out) return;
-    out << to_json().dump(2) << "\n";
+    // Atomic: a crash mid-write must not truncate the config the user has.
+    std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp);
+        if (!out) return;
+        out << to_json().dump(2) << "\n";
+        out.flush();
+        if (!out) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            return;
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        std::error_code ec2;
+        fs::remove(tmp, ec2);
+    }
 }
 
 nlohmann::json Config::to_json() const {
@@ -55,6 +70,12 @@ nlohmann::json Config::to_json() const {
 }
 
 void Config::from_json(const nlohmann::json& j) {
+    // Negative numbers would wrap to absurd size_t limits when converted.
+    auto usize = [](const nlohmann::json& v, size_t def) -> size_t {
+        if (!v.is_number_integer()) return def;
+        int64_t n = v.get<int64_t>();
+        return n < 0 ? def : static_cast<size_t>(n);
+    };
     if (j.contains("ollama_url") && j["ollama_url"].is_string())
         ollama_url = j["ollama_url"].get<std::string>();
     if (j.contains("model") && j["model"].is_string())
@@ -63,18 +84,18 @@ void Config::from_json(const nlohmann::json& j) {
         auto_approve_tools = j["auto_approve_tools"].get<bool>();
     if (j.contains("allow_path_escape") && j["allow_path_escape"].is_boolean())
         allow_path_escape = j["allow_path_escape"].get<bool>();
-    if (j.contains("max_file_bytes") && j["max_file_bytes"].is_number())
-        max_file_bytes = j["max_file_bytes"].get<size_t>();
-    if (j.contains("max_tool_output_bytes") && j["max_tool_output_bytes"].is_number())
-        max_tool_output_bytes = j["max_tool_output_bytes"].get<size_t>();
-    if (j.contains("max_history_messages") && j["max_history_messages"].is_number())
-        max_history_messages = j["max_history_messages"].get<size_t>();
+    if (j.contains("max_file_bytes"))
+        max_file_bytes = usize(j["max_file_bytes"], max_file_bytes);
+    if (j.contains("max_tool_output_bytes"))
+        max_tool_output_bytes = usize(j["max_tool_output_bytes"], max_tool_output_bytes);
+    if (j.contains("max_history_messages"))
+        max_history_messages = usize(j["max_history_messages"], max_history_messages);
     if (j.contains("auto_compact") && j["auto_compact"].is_boolean())
         auto_compact = j["auto_compact"].get<bool>();
-    if (j.contains("compaction_threshold") && j["compaction_threshold"].is_number())
-        compaction_threshold = j["compaction_threshold"].get<size_t>();
-    if (j.contains("context_limit") && j["context_limit"].is_number())
-        context_limit = j["context_limit"].get<size_t>();
+    if (j.contains("compaction_threshold"))
+        compaction_threshold = usize(j["compaction_threshold"], compaction_threshold);
+    if (j.contains("context_limit"))
+        context_limit = usize(j["context_limit"], context_limit);
     if (compaction_threshold < 10) compaction_threshold = 10;
     if (compaction_threshold > 99) compaction_threshold = 99;
     if (j.contains("last_session") && j["last_session"].is_string())

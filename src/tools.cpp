@@ -165,6 +165,17 @@ std::string ToolRunner::path_denied(const std::string& user_path) const {
 ToolResult ToolRunner::run(const std::string& name,
                            const nlohmann::json& arguments,
                            std::function<bool(const std::string& prompt)> confirm_fn) {
+    // Validate before prompting: asking "Execute foo?" for a tool that does
+    // not exist wastes a confirmation on a call that cannot run.
+    bool known = name == "read_file" || name == "write_file" || name == "edit_file" ||
+                 name == "list_directory" || name == "execute" || name == "search";
+    if (!known) {
+        return {false, "unknown tool \"" + name +
+                           "\" - available: read_file, write_file, edit_file, "
+                           "list_directory, execute, search",
+                false};
+    }
+
     bool readonly = is_readonly(name);
     if (!readonly && !cfg_.auto_approve_tools) {
         // The caller already prints the tool name and arguments to the
@@ -181,12 +192,7 @@ ToolResult ToolRunner::run(const std::string& name,
     else if (name == "edit_file") r = edit_file(arguments);
     else if (name == "list_directory") r = list_directory(arguments);
     else if (name == "execute") r = execute(arguments);
-    else if (name == "search") r = search(arguments);
-    else
-        r = {false, "unknown tool \"" + name +
-                        "\" - available: read_file, write_file, edit_file, "
-                        "list_directory, execute, search",
-             false};
+    else r = search(arguments);
 
     // Always sanitize before returning — execute/search can emit arbitrary bytes
     r.output = util::sanitize_utf8(r.output);
@@ -422,9 +428,15 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     std::ostringstream out;
     out << "Listing " << path << ":\n";
     std::vector<std::string> entries;
-    for (auto& ent : fs::directory_iterator(*sp, ec)) {
-        std::string name = ent.path().filename().string();
-        if (ent.is_directory()) name += "/";
+    // Manual iteration with ec: the throwing overloads (is_directory() and
+    // range-for increment) would terminate on a stat error mid-listing.
+    fs::directory_iterator it(*sp, ec);
+    if (ec) return {false, "cannot list " + *sp + ": " + ec.message(), false};
+    for (fs::directory_iterator end; it != end; it.increment(ec)) {
+        if (ec) break;
+        std::string name = it->path().filename().string();
+        std::error_code tec;
+        if (it->is_directory(tec)) name += "/";
         entries.push_back(prefix + name);
     }
     if (ec) return {false, "cannot list " + *sp + ": " + ec.message(), false};
@@ -483,7 +495,12 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     int status = 0;
     // Same reason: retry until the child is really reaped. Giving up here
     // would leave a zombie and status 0 would report a failure as success.
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    pid_t w;
+    while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+    }
+    if (w < 0) {
+        // status was never filled in - reporting it would claim success
+        return {false, std::string("waitpid failed: ") + std::strerror(errno), false};
     }
     // Reaching the limit closes the pipe under the child (SIGPIPE, reported by
     // the shell as 141), so the exit status is our doing and not a failure.

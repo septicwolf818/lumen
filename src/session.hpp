@@ -37,4 +37,6 @@ struct Session {
     static std::vector<std::string> list();
     static bool remove(const std::string& name_or_id);
     static std::string make_id();
+    // Filesystem-safe form of a session name (shared by save and rename)
+    static std::string sanitize_filename(const std::string& name);
 };

@@ -48,6 +48,7 @@ public:
 
 private:
     std::string buf_;
+    bool eof_ = false;  // stdin reached EOF; read() paces instead of spinning
     std::optional<KeyEvent> try_parse();
     std::optional<KeyEvent> parse_escape();
 };

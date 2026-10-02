@@ -29,6 +29,14 @@ std::optional<KeyEvent> InputReader::read(int timeout_ms) {
         auto ev = try_parse();
         if (ev) return ev;
 
+        if (eof_) {
+            // stdin is gone: poll reports POLLHUP immediately, so without
+            // this guard the caller would spin at 100% CPU. Pace instead.
+            if (timeout_ms > 0) usleep(static_cast<useconds_t>(timeout_ms) * 1000);
+            else if (timeout_ms < 0) usleep(100 * 1000);
+            return std::nullopt;
+        }
+
         struct pollfd pfd{};
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
@@ -43,8 +51,12 @@ std::optional<KeyEvent> InputReader::read(int timeout_ms) {
         ssize_t n = ::read(STDIN_FILENO, tmp, sizeof(tmp));
         if (n > 0) {
             buf_.append(reinterpret_cast<char*>(tmp), static_cast<size_t>(n));
-        } else if (n < 0 && errno != EINTR && errno != EAGAIN) {
-            return std::nullopt;
+        } else if (n == 0) {
+            eof_ = true;  // keep any bytes already parsed available
+            return try_parse();
+        } else if (errno != EINTR && errno != EAGAIN) {
+            eof_ = true;
+            return try_parse();
         }
         // if timeout_ms >= 0 and we already waited, loop once more to parse
         if (timeout_ms == 0) return try_parse();

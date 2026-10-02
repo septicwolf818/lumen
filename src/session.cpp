@@ -4,6 +4,7 @@
 #include <random>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 
 static std::string role_to_str(Role r) {
     switch (r) {
@@ -20,6 +21,18 @@ static Role str_to_role(const std::string& s) {
     if (s == "assistant") return Role::Assistant;
     if (s == "tool") return Role::Tool;
     return Role::User;
+}
+
+// A flat, single-component file stem. Names that could climb out of the
+// sessions directory ("/", "..", separators) are skipped for direct path
+// use; callers fall back to scanning file contents instead.
+static bool flat_stem(const std::string& s) {
+    if (s.empty() || s == "." || s == "..") return false;
+    for (char c : s) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != '.')
+            return false;
+    }
+    return true;
 }
 
 nlohmann::json Message::to_json() const {
@@ -91,28 +104,50 @@ std::string Session::make_id() {
     return id;
 }
 
-bool Session::save() const {
-    util::ensure_dir(util::sessions_dir());
-    // Use name as filename if safe, else id
-    std::string fname = name.empty() ? id : name;
-    // sanitize
+std::string Session::sanitize_filename(const std::string& name) {
+    std::string fname = name;
     for (char& c : fname) {
         if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-' && c != '_' && c != '.')
             c = '_';
     }
+    return fname;
+}
+
+bool Session::save() const {
+    util::ensure_dir(util::sessions_dir());
+    // Use name as filename if safe, else id
+    std::string fname = name.empty() ? id : sanitize_filename(name);
     if (fname.empty()) fname = id;
     std::string path = util::sessions_dir() + "/" + fname + ".json";
-    std::ofstream out(path);
-    if (!out) return false;
-    out << to_json().dump(2) << "\n";
+    // Write to a temporary file first: a crash mid-write must not destroy
+    // the existing session (a truncated file would fail to parse on load).
+    std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp);
+        if (!out) return false;
+        out << to_json().dump(2) << "\n";
+        out.flush();
+        if (!out) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        std::error_code ec2;
+        fs::remove(tmp, ec2);
+        return false;
+    }
     return true;
 }
 
 std::optional<Session> Session::load(const std::string& name_or_id) {
     util::ensure_dir(util::sessions_dir());
     // try exact filename stem
-    std::string path = util::sessions_dir() + "/" + name_or_id + ".json";
-    {
+    if (flat_stem(name_or_id)) {
+        std::string path = util::sessions_dir() + "/" + name_or_id + ".json";
         std::ifstream in(path);
         if (in) {
             try {
@@ -127,7 +162,8 @@ std::optional<Session> Session::load(const std::string& name_or_id) {
     // fallback: scan all sessions for matching id or name
     std::error_code ec;
     for (auto& ent : fs::directory_iterator(util::sessions_dir(), ec)) {
-        if (!ent.is_regular_file()) continue;
+        std::error_code tec;
+        if (!ent.is_regular_file(tec)) continue;
         auto p = ent.path();
         if (p.extension() != ".json") continue;
         std::ifstream f(p);
@@ -149,7 +185,8 @@ std::vector<std::string> Session::list() {
     util::ensure_dir(util::sessions_dir());
     std::error_code ec;
     for (auto& ent : fs::directory_iterator(util::sessions_dir(), ec)) {
-        if (!ent.is_regular_file()) continue;
+        std::error_code tec;
+        if (!ent.is_regular_file(tec)) continue;
         auto p = ent.path();
         if (p.extension() == ".json") {
             names.push_back(p.stem().string());
@@ -160,12 +197,16 @@ std::vector<std::string> Session::list() {
 }
 
 bool Session::remove(const std::string& name_or_id) {
-    std::string path = util::sessions_dir() + "/" + name_or_id + ".json";
-    std::error_code ec;
-    if (fs::remove(path, ec)) return true;
+    if (flat_stem(name_or_id)) {
+        std::string path = util::sessions_dir() + "/" + name_or_id + ".json";
+        std::error_code ec;
+        if (fs::remove(path, ec)) return true;
+    }
     // scan
+    std::error_code ec;
     for (auto& ent : fs::directory_iterator(util::sessions_dir(), ec)) {
-        if (!ent.is_regular_file()) continue;
+        std::error_code tec;
+        if (!ent.is_regular_file(tec)) continue;
         auto p = ent.path();
         if (p.extension() != ".json") continue;
         std::ifstream f(p);
