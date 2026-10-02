@@ -62,7 +62,7 @@ int UI::viewport_rows() const {
 }
 
 void UI::wrap_and_push(const std::string& text, int style) {
-    auto wrapped = wrap(text, std::max(10, term_.cols() - 1));
+    auto wrapped = wrap(text, std::max(10, term_.cols()));
     for (auto& w : wrapped) {
         lines_.push_back({w, style});
     }
@@ -135,7 +135,7 @@ void UI::stream_token(const std::string& tok) {
         begin_stream();
     }
     stream_acc_ += tok;
-    auto wrapped = wrap(stream_acc_, std::max(10, term_.cols() - 1));
+    auto wrapped = wrap(stream_acc_, std::max(10, term_.cols()));
     while (lines_.size() > stream_base_) lines_.pop_back();
     for (auto& w : wrapped) lines_.push_back({w, stream_style_});
     if (lines_.empty()) lines_.push_back({"", stream_style_});
@@ -358,7 +358,7 @@ void UI::draw_input() {
     std::string prefix = "> ";
     write_styled(term_, STYLE_BOLD | STYLE_GREEN, prefix);
     // show input, handle overflow simply: show tail around cursor
-    int avail = term_.cols() - static_cast<int>(prefix.size()) - 1;
+    int avail = term_.cols() - static_cast<int>(prefix.size());
     if (avail < 4) avail = 4;
     std::string shown = input_;
     size_t vis_cursor = cursor_;
