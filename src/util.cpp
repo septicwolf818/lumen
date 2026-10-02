@@ -65,9 +65,6 @@ std::vector<std::string> split_lines(const std::string& s) {
     while (std::getline(iss, line)) {
         out.push_back(line);
     }
-    if (!s.empty() && s.back() == '\n') {
-        // keep trailing empty line behaviour consistent
-    }
     return out;
 }
 
@@ -100,12 +97,16 @@ std::optional<fs::path> resolve_safe_path(const fs::path& cwd,
             fs::path base = fs::weakly_canonical(cwd);
             auto pstr = p.string();
             auto bstr = base.string();
-            if (pstr.compare(0, bstr.size(), bstr) != 0) {
-                // not under base
-                if (pstr != bstr && (bstr.empty() || pstr[bstr.size()] != '/')) {
-                    return std::nullopt;
-                }
+            // Must be exactly base or base + '/' + something: a plain prefix
+            // match would let "/work/app-evil" in through base "/work/app",
+            // and indexing past the end of a shorter pstr is undefined.
+            bool under = pstr.size() >= bstr.size() &&
+                         pstr.compare(0, bstr.size(), bstr) == 0;
+            if (under && pstr.size() > bstr.size() && bstr.back() != '/' &&
+                pstr[bstr.size()] != '/') {
+                under = false;  // sibling directory sharing the prefix
             }
+            if (!under) return std::nullopt;
         }
         return p;
     } catch (...) {
