@@ -48,7 +48,7 @@ make build BUILD_TYPE=Debug
 Other targets:
 
 ```bash
-make install    # install to PREFIX (default /usr/local), may need sudo
+make install    # no sudo needed: installs to ~/.local (or /usr/local under sudo)
 make clean      # remove the build directory
 ```
 
