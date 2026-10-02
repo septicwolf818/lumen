@@ -608,19 +608,12 @@ void Agent::do_compact(bool automatic) {
     ui_.append(tag + " summarizing " + std::to_string(before) + " messages...", 1);
     ui_.redraw();
 
+    // Compaction prompt modeled on opencode's anchored-summary compaction:
+    // a <conversation> block followed by an exact Markdown <template> the
+    // model must reproduce, so the result is a structured handoff another
+    // agent can continue from.
     std::ostringstream prompt;
-    prompt
-        << "You are compacting a coding-assistant conversation into a handoff "
-           "summary. The assistant will continue from your summary instead of "
-           "the original history, so preserve everything needed to keep "
-           "working:\n"
-        << "- the user's goal, constraints, and current task state\n"
-        << "- decisions made and the reasons behind them\n"
-        << "- file paths, commands, identifiers, and error messages verbatim\n"
-        << "- what was tried, what worked, and what failed\n"
-        << "- pending work and the concrete next step\n"
-        << "Be terse and factual; do not restate pleasantries. Output only the "
-           "summary.\n\n";
+    prompt << "Here is the conversation so far:\n\n<conversation>\n";
     for (const auto& m : session_.messages) {
         if (m.role == Role::System) continue;
         std::string c = m.content;
@@ -629,6 +622,53 @@ void Agent::do_compact(bool automatic) {
         if (m.tool_calls.is_array() && !m.tool_calls.empty())
             prompt << "Assistant tool calls: " << m.tool_calls.dump() << "\n";
     }
+    prompt
+        << "</conversation>\n\n"
+        << "Create a new anchored summary of the conversation history above "
+           "so another coding agent can continue the work.\n\n"
+        << "Output exactly the Markdown structure shown inside <template> and "
+           "keep the section order unchanged. Do not include the <template> "
+           "tags in your response.\n"
+           "<template>\n"
+           "## Objective\n"
+           "- [one or two brief sentences describing what the user is trying to "
+           "accomplish]\n"
+           "\n"
+           "## Important Details\n"
+           "- [constraints/preferences, decisions and why, important "
+           "facts/assumptions, exact context needed to continue, or \"(none)\"]\n"
+           "\n"
+           "## Work State\n"
+           "### Completed\n"
+           "- [finished work, verified facts, or changes made; otherwise "
+           "\"(none)\"]\n"
+           "\n"
+           "### Active\n"
+           "- [current work, partial changes, or investigation state; otherwise "
+           "\"(none)\"]\n"
+           "\n"
+           "### Blocked\n"
+           "- [blockers, failing commands, or unknowns; otherwise \"(none)\"]\n"
+           "\n"
+           "## Next Move\n"
+           "1. [immediate concrete action, or \"(none)\"]\n"
+           "2. [next action if known, or \"(none)\"]\n"
+           "\n"
+           "## Relevant Files\n"
+           "- [file or directory path: why it matters, or \"(none)\"]\n"
+           "</template>\n\n"
+           "Rules:\n"
+           "- Keep every section, even when empty.\n"
+           "- Use terse bullets, not prose paragraphs.\n"
+           "- Preserve exact file paths, symbols, commands, error strings, "
+           "URLs, and identifiers when known.\n"
+           "- Do not mention the summary process or that context was "
+           "compacted.\n"
+           "- Do not continue the conversation or answer questions from it; "
+           "output only the summary.\n"
+           "- Respond in the same language as the conversation.\n"
+           "- If the conversation contains a previous [conversation summary], "
+           "carry forward its still-relevant details.\n";
 
     // Stream the summary into the transcript so the user sees what will be
     // kept; cancellable with Ctrl+C like any other generation.
