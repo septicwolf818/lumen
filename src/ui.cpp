@@ -163,7 +163,14 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
 
-    if (dim) r |= STYLE_DIM;
+    // Thinking: dim uncoloured text only. SGR 2 (faint) on the Linux console
+    // and several other terminals drops the foreground colour, so overlaying
+    // dim on a coloured span would wipe the syntax highlight.
+    if (dim) {
+        const int color = STYLE_RED | STYLE_GREEN | STYLE_YELLOW | STYLE_BLUE |
+                          STYLE_MAGENTA | STYLE_CYAN | STYLE_REVERSE;
+        if (!(r & color)) r |= STYLE_DIM;
+    }
     return r;
 }
 

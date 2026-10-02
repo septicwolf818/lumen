@@ -195,9 +195,9 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
 
 Blocks are rendered as they stream: a fenced code block is highlighted from the
 moment it opens, and the layout never jumps when the fence later closes. Model
-reasoning ("thinking") is the same render with dim overlaid. Rendering uses
-only attributes the Linux console supports — no italics and no clickable
-hyperlinks.
+reasoning ("thinking") is the same render; dim is applied only to uncoloured
+text so syntax colours stay visible. Rendering uses only attributes the Linux
+console supports — no italics and no clickable hyperlinks.
 
 Output uses only bold, dim, underline, reverse and the 8 basic colours. Set
 `NO_COLOR` (non-empty) to disable all styling:

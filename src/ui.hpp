@@ -61,7 +61,7 @@ public:
     // Render assistant/user text as Markdown when the feature is enabled.
     void set_markdown(bool on) { markdown_ = on; }
     void append_markdown(const std::string& text);
-    // Reasoning text: same Markdown path as the reply, with dim overlaid.
+    // Reasoning text: same Markdown path as the reply; dim on uncoloured text.
     void append_thinking(const std::string& text);
 
     // Streaming: append tokens to the last "open" assistant line.
