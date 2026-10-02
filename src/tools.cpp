@@ -472,13 +472,19 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     size_t limit = cfg_.max_tool_output_bytes;
     while (output.size() < limit) {
         ssize_t n = read(pipefd[0], buf, sizeof(buf));
+        // Signals are installed without SA_RESTART, so resize/Ctrl-C makes read
+        // fail with EINTR - that is not EOF, retry instead of cutting output.
+        if (n < 0 && errno == EINTR) continue;
         if (n <= 0) break;
         size_t take = std::min(static_cast<size_t>(n), limit - output.size());
         output.append(buf, take);
     }
     close(pipefd[0]);
     int status = 0;
-    waitpid(pid, &status, 0);
+    // Same reason: retry until the child is really reaped. Giving up here
+    // would leave a zombie and status 0 would report a failure as success.
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    }
     // Reaching the limit closes the pipe under the child (SIGPIPE, reported by
     // the shell as 141), so the exit status is our doing and not a failure.
     bool truncated = output.size() >= limit;
