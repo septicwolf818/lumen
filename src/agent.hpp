@@ -44,10 +44,12 @@ private:
     };
     TabCycle tab_cycle_;
 
-    // Messages typed while the model is responding: sent after it finishes.
+    // Messages typed while the model is responding: sent after it finishes,
+    // flushed FIFO and batched (consecutive messages = one combined turn).
     std::deque<std::string> queue_;
-    // Slash command typed while responding: cancels generation, runs after.
-    std::string pending_cmd_;
+    // Slash commands typed while responding: cancel generation, run in FIFO
+    // order at the next natural boundary (after compaction / a turn).
+    std::deque<std::string> pending_cmds_;
     // Cancel requested (Ctrl+C or slash): stop generation, tool rounds and queue.
     bool cancel_all_ = false;
 

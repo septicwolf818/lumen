@@ -8,6 +8,24 @@
 namespace {
 // Marker stored with a compaction summary so replay can render it distinctly.
 constexpr const char* kSummaryTag = "[conversation summary]";
+
+// Keeps the UI working indicator (spinner) up for the lifetime of the
+// outermost generation / tool / compaction frame; nested frames are counted.
+struct WorkingGuard {
+    UI& ui;
+    explicit WorkingGuard(UI& u) : ui(u) { ui.set_working(true); }
+    ~WorkingGuard() { ui.set_working(false); }
+};
+
+// FIFO join of a drained batch of queued messages into one user turn.
+std::string join_batch(const std::vector<std::string>& msgs) {
+    std::string out;
+    for (const auto& m : msgs) {
+        if (!out.empty()) out += "\n\n";
+        out += m;
+    }
+    return out;
+}
 }  // namespace
 
 Agent::Agent(Terminal& term, UI& ui, InputReader& input)
@@ -571,6 +589,7 @@ void Agent::do_compact(bool automatic) {
         ui_.message("Nothing to compact");
         return;
     }
+    WorkingGuard work(ui_);
 
     auto role_name = [](Role r) -> const char* {
         switch (r) {
@@ -726,10 +745,11 @@ void Agent::do_compact(bool automatic) {
         }
     }
 
-    // A slash command typed while compacting runs now (like after a turn).
-    if (!pending_cmd_.empty()) {
-        std::string cmd = std::move(pending_cmd_);
-        pending_cmd_.clear();
+    // Slash commands typed while compacting run now (like after a turn),
+    // in the order they were typed.
+    while (running_ && !pending_cmds_.empty()) {
+        std::string cmd = std::move(pending_cmds_.front());
+        pending_cmds_.pop_front();
         cancel_all_ = false;
         handle_command(cmd);
     }
@@ -772,6 +792,7 @@ void Agent::run_turn(const std::string& text) {
 
     // Compaction first, so the new message goes out below the threshold.
     maybe_auto_compact();
+    if (!running_ || Terminal::got_sigterm.load()) return;  // e.g. /quit
 
     Message user;
     user.role = Role::User;
@@ -787,10 +808,11 @@ void Agent::run_turn(const std::string& text) {
 
     run_generation();
 
-    // A slash command typed while responding cancels generation and runs now.
-    if (!pending_cmd_.empty()) {
-        std::string cmd = std::move(pending_cmd_);
-        pending_cmd_.clear();
+    // Slash commands typed while responding cancel generation and run now,
+    // in the order they were typed.
+    while (running_ && !pending_cmds_.empty()) {
+        std::string cmd = std::move(pending_cmds_.front());
+        pending_cmds_.pop_front();
         handle_command(cmd);
         ui_.redraw();
     }
@@ -802,19 +824,34 @@ void Agent::handle_prompt(const std::string& text) {
     flush_queue();
 }
 
-// Send queued messages, one turn each, until the queue is empty or the
-// agent loop was cancelled (Ctrl+C / slash command).
+// Send queued messages FIFO. Consecutive plain messages are batched into a
+// single combined turn (one request, one response); a queued slash command
+// runs at its position, flushing any batch typed before it first. An
+// interrupt does NOT drop the queue - Ctrl+C clears it explicitly where the
+// cancel happens - so messages survive a slash-cancel of the agent loop.
 void Agent::flush_queue() {
-    if (cancel_all_) queue_.clear();
-    while (running_ && !cancel_all_ && !Terminal::got_sigterm.load() && !queue_.empty()) {
-        std::string next = std::move(queue_.front());
-        queue_.pop_front();
-        ui_.set_queue(queue_.size());
-        ui_.redraw();
-        if (!next.empty() && next[0] == '/') handle_command(next);
-        else run_turn(next);
+    cancel_all_ = false;
+    while (running_ && !Terminal::got_sigterm.load() && !queue_.empty()) {
+        std::vector<std::string> batch;
+        while (running_ && !Terminal::got_sigterm.load() && !queue_.empty()) {
+            std::string next = std::move(queue_.front());
+            queue_.pop_front();
+            ui_.set_queue(queue_.size());
+            ui_.redraw();
+            if (!next.empty() && next[0] == '/') {
+                if (!batch.empty()) {
+                    run_turn(join_batch(batch));
+                    batch.clear();
+                }
+                if (!running_ || Terminal::got_sigterm.load()) return;
+                handle_command(next);
+                if (!running_ || Terminal::got_sigterm.load()) return;
+            } else {
+                batch.push_back(next);
+            }
+        }
+        if (!batch.empty()) run_turn(join_batch(batch));
     }
-    if (cancel_all_) queue_.clear();
     ui_.set_queue(queue_.size());
     if (!queue_.empty()) ui_.redraw();
 }
@@ -823,19 +860,22 @@ void Agent::flush_queue() {
 // so it must only touch the UI input line and the queue - never dispatch a
 // prompt or a command.
 void Agent::pump_input() {
+    ui_.tick_spinner();  // animate the separator while the model works
     while (auto ev = input_.read(0)) {
         switch (ev->key) {
             case Key::Enter: {
                 std::string line = util::trim(ui_.input_buf());
                 ui_.push_history(line);
                 ui_.set_input("");
-                if (!line.empty() && !cancel_all_) {
+                if (!line.empty()) {
                     if (line[0] == '/') {
                         // slash command: cancel the agent loop, run afterwards
-                        pending_cmd_ = line;
+                        pending_cmds_.push_back(line);
                         abort_gen_ = true;
                         cancel_all_ = true;
                     } else {
+                        // kept even while an interrupt is unwinding - the
+                        // queue is only dropped by an explicit Ctrl+C
                         queue_.push_back(line);
                         ui_.set_queue(queue_.size());
                     }
@@ -846,6 +886,8 @@ void Agent::pump_input() {
             case Key::CtrlC:
                 abort_gen_ = true;
                 cancel_all_ = true;
+                queue_.clear();  // cancel means cancel, queue included
+                ui_.set_queue(0);
                 ui_.set_input("");
                 ui_.redraw();
                 break;
@@ -876,12 +918,15 @@ void Agent::run_generation() {
     abort_gen_ = false;
     Terminal::got_sigint.store(false);
     Terminal::sigint_count.store(0);
+    WorkingGuard work(ui_);
 
     auto should_abort = [this]() -> bool {
         if (Terminal::got_sigterm.load()) return true;
         if (Terminal::got_sigint.load()) {
             abort_gen_ = true;
             cancel_all_ = true;
+            queue_.clear();  // Ctrl+C cancels everything, including the queue
+            ui_.set_queue(0);
             Terminal::got_sigint.store(false);
         }
         pump_input();  // keep the input line alive while generating
@@ -995,6 +1040,7 @@ void Agent::run_generation() {
 
 void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
     if (!assistant_msg.contains("tool_calls")) return;
+    WorkingGuard work(ui_);  // spinner stays up between tool rounds
     for (const auto& tc : assistant_msg["tool_calls"]) {
         // Ctrl+C / slash cancel: stop the agent loop, no further tool calls
         if (cancel_all_ || !running_ || Terminal::got_sigterm.load()) return;

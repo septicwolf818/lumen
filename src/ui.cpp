@@ -331,12 +331,17 @@ void UI::draw_viewport() {
         }
     }
 
-    // separator / scroll indicator
+    // separator / scroll / spinner indicator
     term_.move_cursor(term_.rows() - 1, 1);
     term_.clear_line();
     std::string ind;
+    if (working_depth_ > 0) {
+        static const char kFrames[] = "|-\\/";
+        ind = std::string(1, kFrames[spinner_frame_]);
+    }
     if (scroll_offset_ > 0) {
-        ind = "[scroll: " + std::to_string(scroll_offset_) + " lines above bottom]";
+        if (!ind.empty()) ind += "  ";
+        ind += "[scroll: " + std::to_string(scroll_offset_) + " lines above bottom]";
     }
     if (queue_count_ > 0) {
         if (!ind.empty()) ind += "  ";
@@ -417,4 +422,20 @@ bool UI::confirm(InputReader& in, const std::string& prompt) {
 void UI::message(const std::string& msg, int style) {
     last_message_ = msg;
     append(msg, style);
+}
+
+void UI::set_working(bool w) {
+    bool was = working_depth_ > 0;
+    working_depth_ += w ? 1 : -1;
+    if (working_depth_ < 0) working_depth_ = 0;
+    if (was != (working_depth_ > 0)) redraw();  // spinner appears / clears
+}
+
+void UI::tick_spinner() {
+    if (working_depth_ <= 0) return;
+    uint64_t now = util::steady_ms();
+    if (now - spinner_last_ms_ < 130) return;
+    spinner_last_ms_ = now;
+    spinner_frame_ = (spinner_frame_ + 1) % 4;
+    redraw();
 }

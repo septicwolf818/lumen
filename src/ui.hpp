@@ -2,6 +2,7 @@
 
 #include "terminal.hpp"
 #include "input.hpp"
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <deque>
@@ -98,6 +99,13 @@ public:
     void set_queue(size_t n) { queue_count_ = n; }
     size_t queue() const { return queue_count_; }
 
+    // Working indicator: RAII-style depth counter, so nested generation /
+    // tool / compaction frames keep the spinner up until the outermost one
+    // finishes. The separator row shows a |/-\ frame instead of "---".
+    void set_working(bool w);
+    bool working() const { return working_depth_ > 0; }
+    void tick_spinner();  // advance the frame (throttled) and redraw
+
     int viewport_rows() const;
 
 private:
@@ -119,6 +127,9 @@ private:
     size_t stream_base_ = 0;  // index of the line begin_stream() opened
     std::string last_message_;
     size_t queue_count_ = 0;
+    int working_depth_ = 0;      // nested set_working() frames
+    int spinner_frame_ = 0;      // index into "|-\\/"
+    uint64_t spinner_last_ms_ = 0;
 
     void wrap_and_push(const std::string& text, int style);
     std::vector<std::string> wrap(const std::string& text, int width) const;
