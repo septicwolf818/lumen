@@ -9,9 +9,6 @@
 
 struct OllamaModel {
     std::string name;
-    std::string model;  // same as name usually
-    int64_t size = 0;
-    std::string modified;
 };
 
 // Token counts reported by Ollama for the last request (-1 = not reported).
@@ -48,13 +45,6 @@ public:
         std::string* err = nullptr,
         nlohmann::json* final_message = nullptr,  // filled with full assistant message
         OllamaUsage* usage = nullptr
-    );
-
-    // Non-streaming simple generate (for /compact)
-    std::optional<std::string> generate(
-        const std::string& model,
-        const std::string& prompt,
-        std::string* err = nullptr
     );
 
     // Allocated context length of the running model (GET /api/ps

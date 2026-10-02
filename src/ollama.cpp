@@ -1,10 +1,7 @@
 #include "ollama.hpp"
 #include <curl/curl.h>
-#include <sstream>
-#include <cstring>
 
 OllamaClient::OllamaClient(std::string base_url) : base_url_(std::move(base_url)) {
-    // strip trailing slash
     while (!base_url_.empty() && base_url_.back() == '/') base_url_.pop_back();
 }
 
@@ -163,7 +160,7 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                     }
                 }
             }
-        } catch (const std::exception& e) {
+        } catch (const std::exception&) {
             // ignore parse errors on partial
         }
     }
@@ -204,13 +201,6 @@ std::optional<std::vector<OllamaModel>> OllamaClient::list_models(std::string* e
                 OllamaModel om;
                 if (m.contains("name") && m["name"].is_string())
                     om.name = m["name"].get<std::string>();
-                if (m.contains("model") && m["model"].is_string())
-                    om.model = m["model"].get<std::string>();
-                else om.model = om.name;
-                if (m.contains("size") && m["size"].is_number())
-                    om.size = m["size"].get<int64_t>();
-                if (m.contains("modified_at") && m["modified_at"].is_string())
-                    om.modified = m["modified_at"].get<std::string>();
                 models.push_back(om);
             }
         }
@@ -239,9 +229,8 @@ int OllamaClient::context_length(const std::string& model) {
     if (rc != CURLE_OK || http != 200) return 0;
 
     auto strip_tag = [](const std::string& s) {
+        // Compare names before the ":tag" suffix ("llama3:8b" -> "llama3").
         size_t p = s.find(':');
-        // keep quantization-style tags intact only when the base differs;
-        // for matching we compare the part before the first ':'
         return p == std::string::npos ? s : s.substr(0, p);
     };
     try {
@@ -389,51 +378,4 @@ bool OllamaClient::chat_stream(
         return false;
     }
     return true;
-}
-
-std::optional<std::string> OllamaClient::generate(
-    const std::string& model,
-    const std::string& prompt,
-    std::string* err
-) {
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        if (err) *err = "curl init failed";
-        return std::nullopt;
-    }
-    nlohmann::json req;
-    req["model"] = model;
-    req["prompt"] = prompt;
-    req["stream"] = false;
-    std::string payload = req.dump();
-    std::string url = base_url_ + "/api/generate";
-    std::string body;
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    CURLcode rc = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    if (rc != CURLE_OK) {
-        if (err) *err = curl_easy_strerror(rc);
-        return std::nullopt;
-    }
-    try {
-        auto j = nlohmann::json::parse(body);
-        if (j.contains("response") && j["response"].is_string())
-            return j["response"].get<std::string>();
-        if (j.contains("error")) {
-            if (err) *err = j["error"].get<std::string>();
-            return std::nullopt;
-        }
-    } catch (...) {}
-    if (err) *err = "bad response";
-    return std::nullopt;
 }

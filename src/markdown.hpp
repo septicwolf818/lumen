@@ -33,6 +33,13 @@ enum Style : int {
     SYN_COMMENT   = 1 << 11,
     SYN_NUMBER    = 1 << 12,
     SYN_FUNCTION  = 1 << 13,
+    SYN_TYPE      = 1 << 14,
+    SYN_CONSTANT  = 1 << 15,  // built-in constants / booleans / None
+    SYN_BUILTIN   = 1 << 16,  // language built-in functions
+    SYN_VARIABLE  = 1 << 17,  // variables / parameters
+    SYN_OPERATOR  = 1 << 18,  // operators and punctuation
+    SYN_PREPROC   = 1 << 19,  // preprocessor directives (#include, ...)
+    SYN_ATTRIBUTE = 1 << 20,  // decorators, annotations
 };
 
 struct Span {

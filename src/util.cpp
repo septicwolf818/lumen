@@ -2,12 +2,10 @@
 #include <cstdlib>
 #include <ctime>
 #include <sstream>
-#include <iomanip>
 #include <algorithm>
+#include <fstream>
 #include <unistd.h>
 #include <pwd.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 
 namespace util {
 
@@ -41,6 +39,29 @@ bool ensure_dir(const std::string& path) {
     return !ec;
 }
 
+bool write_file_atomic(const std::string& path, const std::string& data) {
+    std::string tmp = path + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary);
+        if (!out) return false;
+        out << data;
+        out.flush();
+        if (!out) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        std::error_code ec2;
+        fs::remove(tmp, ec2);
+        return false;
+    }
+    return true;
+}
+
 std::string now_iso8601() {
     auto now = std::chrono::system_clock::now();
     std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -66,16 +87,6 @@ std::vector<std::string> split_lines(const std::string& s) {
         out.push_back(line);
     }
     return out;
-}
-
-std::string join(const std::vector<std::string>& parts, const std::string& sep) {
-    if (parts.empty()) return {};
-    std::string r = parts[0];
-    for (size_t i = 1; i < parts.size(); ++i) {
-        r += sep;
-        r += parts[i];
-    }
-    return r;
 }
 
 std::string expand_path(const std::string& p) {
@@ -255,4 +266,4 @@ bool looks_binary(const std::string& s, size_t sample) {
     return nontext * 10 > n * 3;
 }
 
-} // namespace util
+}  // namespace util

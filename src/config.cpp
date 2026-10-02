@@ -32,25 +32,7 @@ void Config::load() {
 void Config::save() const {
     util::ensure_dir(util::config_dir());
     std::string path = util::config_dir() + "/config.json";
-    // Atomic: a crash mid-write must not truncate the config the user has.
-    std::string tmp = path + ".tmp";
-    {
-        std::ofstream out(tmp);
-        if (!out) return;
-        out << to_json().dump(2) << "\n";
-        out.flush();
-        if (!out) {
-            std::error_code ec;
-            fs::remove(tmp, ec);
-            return;
-        }
-    }
-    std::error_code ec;
-    fs::rename(tmp, path, ec);
-    if (ec) {
-        std::error_code ec2;
-        fs::remove(tmp, ec2);
-    }
+    util::write_file_atomic(path, to_json().dump(2) + "\n");
 }
 
 nlohmann::json Config::to_json() const {

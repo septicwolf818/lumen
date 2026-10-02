@@ -122,10 +122,6 @@ void Terminal::write(const char* s, size_t n) {
     }
 }
 
-void Terminal::flush() {
-    // stdout is unbuffered after we write directly; nothing extra needed
-}
-
 void Terminal::clear_screen() {
     write("\033[H\033[2J");
 }
@@ -146,30 +142,6 @@ void Terminal::hide_cursor() {
 
 void Terminal::show_cursor() {
     write("\033[?25h");
-}
-
-void Terminal::set_scroll_region(int top, int bottom) {
-    char buf[32];
-    int n = std::snprintf(buf, sizeof(buf), "\033[%d;%dr", top, bottom);
-    if (n > 0) write(buf, static_cast<size_t>(n));
-}
-
-void Terminal::reset_scroll_region() {
-    write("\033[r");
-}
-
-void Terminal::set_fg(int color) {
-    if (util::no_color()) return;  // NO_COLOR: emit no styling at all
-    // color 0-7 -> 30-37
-    if (color >= 0 && color <= 7) {
-        char buf[16];
-        int n = std::snprintf(buf, sizeof(buf), "\033[%dm", 30 + color);
-        if (n > 0) write(buf, static_cast<size_t>(n));
-    } else if (color >= 30 && color <= 37) {
-        char buf[16];
-        int n = std::snprintf(buf, sizeof(buf), "\033[%dm", color);
-        if (n > 0) write(buf, static_cast<size_t>(n));
-    }
 }
 
 void Terminal::reset_attrs() {

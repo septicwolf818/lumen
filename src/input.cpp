@@ -2,7 +2,6 @@
 #include <unistd.h>
 #include <poll.h>
 #include <cerrno>
-#include <cstring>
 
 InputReader::InputReader() = default;
 
@@ -132,11 +131,10 @@ std::optional<KeyEvent> InputReader::try_parse() {
         KeyEvent ev;
         ev.key = Key::Char;
         ev.raw = buf_.substr(0, len);
-        // simplistic codepoint (enough for display / insert)
+        // Decode one UTF-8 sequence into a codepoint (enough for editing).
         if (len == 1) {
             ev.codepoint = c;
         } else {
-            // decode roughly
             uint32_t cp = 0;
             if (len == 2) {
                 cp = ((c & 0x1F) << 6) | (static_cast<unsigned char>(buf_[1]) & 0x3F);
@@ -258,7 +256,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
             }
             ++i;
         }
-        // incomplete CSI – wait
+        // Incomplete escape sequence: keep buffering for the next read.
         if (buf_.size() > 16) {
             // give up
             KeyEvent ev;

@@ -18,10 +18,13 @@ std::string sessions_dir();
 
 bool ensure_dir(const std::string& path);
 
+// Write data to a temporary file and rename it over path, so a crash mid-write
+// cannot leave a truncated file behind. Returns false on any I/O failure.
+bool write_file_atomic(const std::string& path, const std::string& data);
+
 std::string now_iso8601();
 std::string trim(const std::string& s);
 std::vector<std::string> split_lines(const std::string& s);
-std::string join(const std::vector<std::string>& parts, const std::string& sep);
 
 // Expand a leading "~" or "~/" to the home directory. Forms we cannot resolve
 // safely (~user, $VAR) are returned unchanged rather than mangled.
@@ -54,4 +57,4 @@ std::string sanitize_utf8(const std::string& s);
 // Heuristic: NUL bytes or mostly non-text → binary
 bool looks_binary(const std::string& s, size_t sample = 8192);
 
-} // namespace util
+}  // namespace util

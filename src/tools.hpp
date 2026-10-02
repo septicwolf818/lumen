@@ -10,7 +10,6 @@
 struct ToolResult {
     bool ok = true;
     std::string output;
-    bool needs_confirm = false;  // set by dispatcher before execution
 };
 
 // Tool definitions for Ollama

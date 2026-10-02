@@ -57,7 +57,6 @@ public:
 
     // Append a line (or multi-line) to scrollback. Auto-scrolls if at bottom.
     void append(const std::string& text, int style = 0);
-    void append_raw(const std::string& text);  // no wrap, as-is
 
     // Render assistant/user text as Markdown when the feature is enabled.
     void set_markdown(bool on) { markdown_ = on; }
@@ -76,9 +75,6 @@ public:
     void scroll_down(int n = 1);
     void scroll_page_up();
     void scroll_page_down();
-    void scroll_home();
-    void scroll_end();
-    bool at_bottom() const;
 
     // Input line editing
     std::string& input_buf() { return input_; }
@@ -113,13 +109,11 @@ public:
 
     // Queued messages waiting for the current response to finish
     void set_queue(size_t n) { queue_count_ = n; }
-    size_t queue() const { return queue_count_; }
 
     // Working indicator: RAII-style depth counter, so nested generation /
     // tool / compaction frames keep the spinner up until the outermost one
     // finishes. The separator row shows a |/-\ frame instead of "---".
     void set_working(bool w);
-    bool working() const { return working_depth_ > 0; }
     void tick_spinner();  // advance the frame (throttled) and redraw
     void tick_marquee();
 
@@ -142,7 +136,6 @@ private:
     int stream_style_ = 0;
     std::string stream_acc_;
     size_t stream_base_ = 0;  // index of the line begin_stream() opened
-    std::string last_message_;
     size_t queue_count_ = 0;
     int working_depth_ = 0;      // nested set_working() frames
     int spinner_frame_ = 0;      // index into "|/-\"

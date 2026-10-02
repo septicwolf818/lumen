@@ -81,7 +81,7 @@ private:
     void show_help();
     void do_compact(bool automatic = false);
     void maybe_auto_compact();                    // threshold check, new turn
-    size_t sent_chars() const;                    // bytes of what we would send
+    size_t sent_chars() const;                    // bytes sent, excluding thinking
     int estimate_ctx_used() const;                // anchor + estimated additions
     void refresh_ctx_limit();                     // detect model switch / /api/ps
     void update_ctx_display();                    // push "12.4k/32k (39%)" to UI

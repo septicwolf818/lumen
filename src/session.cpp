@@ -2,7 +2,6 @@
 #include "util.hpp"
 #include <fstream>
 #include <random>
-#include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -159,32 +158,10 @@ std::string Session::unique_title(const std::string& base,
 
 bool Session::save() const {
     util::ensure_dir(util::sessions_dir());
-    // Use name as filename if safe, else id
     std::string fname = name.empty() ? id : sanitize_filename(name);
     if (fname.empty()) fname = id;
     std::string path = util::sessions_dir() + "/" + fname + ".json";
-    // Write to a temporary file first: a crash mid-write must not destroy
-    // the existing session (a truncated file would fail to parse on load).
-    std::string tmp = path + ".tmp";
-    {
-        std::ofstream out(tmp);
-        if (!out) return false;
-        out << to_json().dump(2) << "\n";
-        out.flush();
-        if (!out) {
-            std::error_code ec;
-            fs::remove(tmp, ec);
-            return false;
-        }
-    }
-    std::error_code ec;
-    fs::rename(tmp, path, ec);
-    if (ec) {
-        std::error_code ec2;
-        fs::remove(tmp, ec2);
-        return false;
-    }
-    return true;
+    return util::write_file_atomic(path, to_json().dump(2) + "\n");
 }
 
 std::optional<Session> Session::load(const std::string& name_or_id) {

@@ -712,9 +712,13 @@ void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
 
 struct LangProfile {
     std::vector<std::string> keywords;
-    std::string line_comment;   // starts a comment to end of line
-    bool block_comment = false; // C-style /* ... */
+    std::vector<std::string> types;
+    std::vector<std::string> constants;   // booleans, None/null, ...
+    std::vector<std::string> builtins;    // built-in function names
+    std::string line_comment;             // starts a comment to end of line
+    bool block_comment = false;           // C-style /* ... */
     bool case_insensitive = false;
+    bool python_like = false;             // '#': preprocessor/decorator
 };
 
 const LangProfile* lang_profile(const std::string& raw) {
@@ -723,44 +727,64 @@ const LangProfile* lang_profile(const std::string& raw) {
 
     static const LangProfile py = {
         {"def", "class", "return", "if", "elif", "else", "for", "while", "import", "from",
-         "as", "try", "except", "finally", "with", "lambda", "yield", "None", "True", "False",
-         "and", "or", "not", "in", "is", "pass", "break", "continue", "global", "nonlocal",
-         "raise", "assert", "async", "await", "del", "match", "case", "self"},
-        "#", false, false};
+         "as", "try", "except", "finally", "with", "lambda", "yield", "and", "or", "not",
+         "in", "is", "pass", "break", "continue", "global", "nonlocal", "raise", "assert",
+         "async", "await", "del", "match", "case"},
+        {"int", "float", "str", "bool", "bytes", "list", "dict", "set", "tuple", "object"},
+        {"None", "True", "False", "self", "cls", "NotImplemented", "Ellipsis"},
+        {"print", "len", "range", "enumerate", "zip", "map", "filter", "sum", "min", "max",
+         "abs", "open", "isinstance", "input", "sorted", "reversed", "type", "str", "int",
+         "float", "list", "dict", "set", "tuple", "super", "getattr", "setattr", "format"},
+        "#", false, false, true};
     static const LangProfile sh = {
         {"if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
-         "esac", "function", "in", "select", "time", "echo", "export", "local", "readonly",
-         "return", "exit", "set", "unset", "read", "cd", "source", "shift", "trap", "true",
-         "false", "printf", "test"},
-        "#", false, false};
+         "esac", "function", "in", "select", "time", "return", "exit", "set", "unset",
+         "read", "local", "readonly", "export", "source", "shift", "trap", "declare"},
+        {},
+        {"true", "false"},
+        {"echo", "printf", "read", "cd", "pwd", "test", "exit", "export", "unset", "set",
+         "shift", "eval", "exec", "source", "trap", "wait", "kill", "sleep", "cat", "grep",
+         "sed", "awk", "find", "ls", "mkdir", "rm", "cp", "mv", "chmod", "curl", "wget"},
+        "#", false, false, true};
     static const LangProfile clike = {
         {"if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue",
          "return", "function", "var", "let", "const", "new", "delete", "typeof", "instanceof",
          "in", "of", "class", "extends", "import", "export", "from", "as", "try", "catch",
-         "finally", "throw", "void", "this", "super", "static", "public", "private", "protected",
-         "int", "long", "short", "unsigned", "signed", "float", "double", "char", "bool",
-         "struct", "enum", "union", "typedef", "namespace", "using", "template", "typename",
-         "auto", "true", "false", "null", "nullptr", "package", "func", "defer", "go", "chan",
-         "map", "range", "fn", "mut", "impl", "trait", "pub", "use", "match", "mod", "where",
-         "async", "await"},
-        "//", true, false};
+         "finally", "throw", "void", "this", "super", "static", "public", "private",
+         "protected", "namespace", "using", "template", "typename", "auto", "package", "func",
+         "defer", "go", "chan", "map", "range", "fn", "mut", "impl", "trait", "pub", "use",
+         "match", "mod", "where", "async", "await", "extern", "sizeof", "typedef", "struct",
+         "enum", "union", "operator", "friend", "inline", "virtual", "override", "final",
+         "explicit", "mutable", "noexcept", "nullptr_t", "interface", "record", "sealed"},
+        {"int", "long", "short", "unsigned", "signed", "float", "double", "char", "bool",
+         "void", "size_t", "ssize_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t",
+         "int16_t", "int32_t", "int64_t", "string", "wchar_t", "byte", "rune", "u8", "u16",
+         "u32", "u64", "i8", "i16", "i32", "i64", "usize", "isize", "f32", "f64"},
+        {"true", "false", "null", "nullptr", "NULL", "None"},
+        {},
+        "//", true, false, false};
     static const LangProfile json = {
-        {"true", "false", "null"}, "", false, false};
+        {}, {}, {"true", "false", "null"}, {}, "", false, false, false};
     static const LangProfile yaml = {
-        {"true", "false", "null", "yes", "no", "on", "off"}, "#", false, false};
+        {}, {}, {"true", "false", "null", "yes", "no", "on", "off"}, {}, "#", false, false, true};
     static const LangProfile sql = {
         {"select", "from", "where", "and", "or", "not", "insert", "into", "values", "update",
          "set", "delete", "create", "table", "drop", "alter", "join", "inner", "left", "right",
          "outer", "on", "group", "by", "order", "having", "limit", "offset", "union", "all",
-         "distinct", "as", "null", "count", "sum", "avg", "min", "max", "like", "in", "exists",
-         "between", "primary", "key", "foreign", "references", "index"},
-        "--", true, true};
+         "distinct", "as", "null", "like", "in", "exists", "between", "primary", "key",
+         "foreign", "references", "index", "returning", "case", "when", "then", "else", "end"},
+        {"int", "integer", "bigint", "smallint", "text", "varchar", "char", "boolean", "bool",
+         "date", "timestamp", "timestamptz", "numeric", "decimal", "real", "double", "serial",
+         "uuid", "jsonb", "json", "bytea"},
+        {"null", "true", "false"},
+        {"count", "sum", "avg", "min", "max", "coalesce", "now", "lower", "upper", "length"},
+        "--", true, true, false};
 
     if (l == "python" || l == "py" || l == "python3") return &py;
     if (l == "bash" || l == "sh" || l == "shell" || l == "zsh") return &sh;
     if (l == "js" || l == "javascript" || l == "ts" || l == "typescript" || l == "c" ||
-        l == "h" || l == "cpp" || l == "c++" || l == "cc" || l == "hpp" || l == "java" ||
-        l == "go" || l == "rust" || l == "rs")
+        l == "h" || l == "cpp" || l == "c++" || l == "cc" || l == "cxx" || l == "hpp" ||
+        l == "java" || l == "go" || l == "rust" || l == "rs" || l == "cs" || l == "csharp")
         return &clike;
     if (l == "json") return &json;
     if (l == "yaml" || l == "yml") return &yaml;
@@ -770,6 +794,14 @@ const LangProfile* lang_profile(const std::string& raw) {
 
 bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
 
+bool in_list(const std::vector<std::string>& v, std::string w, bool ci) {
+    if (ci)
+        for (char& c : w) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return std::find(v.begin(), v.end(), w) != v.end();
+}
+
+// Tokenize one line of code into styled spans. Identifier classification:
+// keyword > constant > type > builtin > function (followed by '(') > variable.
 Line highlight(const std::string& line, const std::string& lang) {
     Line out;
     const LangProfile* p = lang_profile(lang);
@@ -777,15 +809,31 @@ Line highlight(const std::string& line, const std::string& lang) {
         out.push_back({line, CODE_BLOCK});
         return out;
     }
-    auto is_keyword = [&](std::string w) {
-        if (p->case_insensitive)
-            for (char& c : w) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return std::find(p->keywords.begin(), p->keywords.end(), w) != p->keywords.end();
-    };
+    bool ci = p->case_insensitive;
+    auto is_kw = [&](const std::string& w) { return in_list(p->keywords, w, ci); };
+    auto is_const = [&](const std::string& w) { return in_list(p->constants, w, ci); };
+    auto is_type = [&](const std::string& w) { return in_list(p->types, w, ci); };
+    auto is_builtin = [&](const std::string& w) { return in_list(p->builtins, w, false); };
 
     size_t i = 0, n = line.size();
+    bool at_line_start = true;  // preprocessor for '#' languages
     while (i < n) {
-        if (!p->line_comment.empty() && line.compare(i, p->line_comment.size(), p->line_comment) == 0) {
+        char c = line[i];
+
+        // Preprocessor directive for '#' languages (Python decorators too).
+        if (p->python_like && c == '#' && at_line_start) {
+            out.push_back({line.substr(i), CODE_BLOCK | SYN_PREPROC});
+            break;
+        }
+        if (p->python_like && c == '@' && at_line_start) {
+            size_t j = i + 1;
+            while (j < n && ident_char(line[j])) ++j;
+            out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_ATTRIBUTE});
+            i = j;
+            continue;
+        }
+        if (!p->line_comment.empty() &&
+            line.compare(i, p->line_comment.size(), p->line_comment) == 0) {
             out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
             break;
         }
@@ -793,7 +841,7 @@ Line highlight(const std::string& line, const std::string& lang) {
             out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
             break;
         }
-        char c = line[i];
+
         if (c == '"' || c == '\'' || c == '`') {
             char q = c;
             size_t j = i + 1;
@@ -804,32 +852,57 @@ Line highlight(const std::string& line, const std::string& lang) {
             if (j < n) ++j;
             out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_STRING});
             i = j;
+            at_line_start = false;
             continue;
         }
         if (std::isdigit(static_cast<unsigned char>(c))) {
             size_t j = i;
-            while (j < n && (std::isalnum(static_cast<unsigned char>(line[j])) || line[j] == '.' ||
-                             line[j] == '_'))
+            while (j < n && (std::isalnum(static_cast<unsigned char>(line[j])) ||
+                             line[j] == '.' || line[j] == '_' || line[j] == 'x' ||
+                             line[j] == 'X'))
                 ++j;
             out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_NUMBER});
             i = j;
+            at_line_start = false;
             continue;
         }
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
             size_t j = i;
             while (j < n && ident_char(line[j])) ++j;
             std::string w = line.substr(i, j - i);
-            int style = CODE_BLOCK;
-            if (is_keyword(w))
-                style |= SYN_KEYWORD;
+            int style;
+            if (is_kw(w))
+                style = SYN_KEYWORD;
+            else if (is_const(w))
+                style = SYN_CONSTANT;
+            else if (is_type(w))
+                style = SYN_TYPE;
+            else if (is_builtin(w))
+                style = SYN_BUILTIN;
             else if (j < n && line[j] == '(')
-                style |= SYN_FUNCTION;
-            out.push_back({w, style});
+                style = SYN_FUNCTION;
+            else if (j == n || line[j] == ',' || line[j] == ')' || line[j] == '(')
+                style = SYN_VARIABLE;
+            else
+                style = SYN_VARIABLE;
+            out.push_back({w, CODE_BLOCK | style});
             i = j;
+            at_line_start = false;
+            continue;
+        }
+        // Operators and punctuation.
+        static const std::string ops = "+-*/%=<>!&|^~?:.#@";
+        if (ops.find(c) != std::string::npos) {
+            size_t j = i;
+            while (j < n && ops.find(line[j]) != std::string::npos) ++j;
+            out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_OPERATOR});
+            i = j;
+            at_line_start = false;
             continue;
         }
         out.push_back({std::string(1, c), CODE_BLOCK});
-        ++i;
+        i += 1;
+        at_line_start = false;
     }
     return out;
 }

@@ -3,7 +3,6 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <atomic>
-#include <functional>
 #include <string>
 
 // Raw TTY control for Linux virtual consoles (TERM=linux) and SSH.
@@ -38,19 +37,12 @@ public:
     void move_cursor(int row, int col);  // 1-based
     void hide_cursor();
     void show_cursor();
-    void set_scroll_region(int top, int bottom);  // 1-based inclusive
-    void reset_scroll_region();
 
     // Write to stdout (handles partial writes)
     void write(const std::string& s);
     void write(const char* s, size_t n);
-    void flush();
 
-    // Basic colour (optional, works on most TTYs)
-    void set_fg(int ansi_color);  // 0-7 or 30-37 style
     void reset_attrs();
-
-    bool is_raw() const { return raw_; }
 
     // Signal-safe flag: set by signal handlers
     static std::atomic<bool> got_sigint;

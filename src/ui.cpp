@@ -2,7 +2,6 @@
 #include "markdown.hpp"
 #include "util.hpp"
 #include <algorithm>
-#include <cstring>
 
 namespace {
 
@@ -141,16 +140,26 @@ int map_md_style(int st) {
     if (st & md::ITALIC) r |= STYLE_YELLOW;
     if (st & md::STRIKE) r |= STYLE_DIM;
     if (st & md::CODE) r |= STYLE_REVERSE;
-    if (st & md::CODE_BLOCK) r |= STYLE_CYAN;
     if (st & md::HEADING) r |= STYLE_BOLD | STYLE_CYAN;
     if (st & md::LINK) r |= STYLE_UNDERLINE | STYLE_BLUE;
     if (st & md::QUOTE) r |= STYLE_DIM;
     if (st & md::MARKER) r |= STYLE_DIM;
+
+    // Code block syntax colours. Each token category gets its own attribute so
+    // the block reads like a real editor even on a plain Linux console.
+    if (st & md::CODE_BLOCK) r |= STYLE_CYAN;  // default code text
     if (st & md::SYN_KEYWORD) r |= STYLE_BOLD | STYLE_BLUE;
+    if (st & md::SYN_CONSTANT) r |= STYLE_BOLD | STYLE_MAGENTA;
+    if (st & md::SYN_TYPE) r |= STYLE_YELLOW;
+    if (st & md::SYN_BUILTIN) r |= STYLE_CYAN;
+    if (st & md::SYN_FUNCTION) r |= STYLE_BOLD | STYLE_CYAN;
+    if (st & md::SYN_VARIABLE) r |= STYLE_CYAN;
     if (st & md::SYN_STRING) r |= STYLE_GREEN;
-    if (st & md::SYN_COMMENT) r |= STYLE_DIM;
     if (st & md::SYN_NUMBER) r |= STYLE_MAGENTA;
-    if (st & md::SYN_FUNCTION) r |= STYLE_CYAN;
+    if (st & md::SYN_COMMENT) r |= STYLE_DIM;
+    if (st & md::SYN_OPERATOR) r |= STYLE_RED;
+    if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
+    if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW;
     return r;
 }
 
@@ -301,7 +310,6 @@ std::vector<DisplayLine> UI::render_markdown(const std::string& text, int width)
 }
 
 void UI::append(const std::string& text, int style) {
-    // split on newlines first
     size_t start = 0;
     while (start <= text.size()) {
         size_t nl = text.find('\n', start);
@@ -316,10 +324,6 @@ void UI::append(const std::string& text, int style) {
 
 void UI::append_markdown(const std::string& text) {
     push_lines(render_markdown(text, term_.cols()));
-}
-
-void UI::append_raw(const std::string& text) {
-    append(text, 0);
 }
 
 void UI::begin_stream(int style) {
@@ -337,16 +341,22 @@ void UI::stream_token(const std::string& tok) {
         begin_stream();
     }
     stream_acc_ += tok;
-    auto wrapped = wrap_spans({{sanitize_text(stream_acc_), stream_style_}},
-                              std::max(10, term_.cols()));
+    // Render Markdown live so code fences are highlighted as they stream. The
+    // parser is safe on partial input: an unclosed fence renders as a code
+    // block and half-typed emphasis stays literal, so nothing jumps around.
+    std::vector<DisplayLine> wrapped;
+    if (markdown_ && stream_style_ != STYLE_DIM)
+        wrapped = render_markdown(stream_acc_, std::max(10, term_.cols()));
+    else
+        wrapped = wrap_spans({{sanitize_text(stream_acc_), stream_style_}},
+                             std::max(10, term_.cols()));
     while (lines_.size() > stream_base_) lines_.pop_back();
     for (auto& dl : wrapped) lines_.push_back(std::move(dl));
     if (lines_.empty()) lines_.push_back(DisplayLine{});
 }
 
 void UI::end_stream() {
-    // Markdown is rendered once the message is complete: parsing a partial
-    // fence or a half-typed emphasis char would make the block jump around.
+    // Final render once the message is complete (closes any open fences cleanly).
     if (markdown_ && stream_style_ != STYLE_DIM && !stream_acc_.empty()) {
         auto rendered = render_markdown(stream_acc_, term_.cols());
         while (lines_.size() > stream_base_) lines_.pop_back();
@@ -377,12 +387,6 @@ void UI::scroll_down(int n) {
 
 void UI::scroll_page_up() { scroll_up(viewport_rows()); }
 void UI::scroll_page_down() { scroll_down(viewport_rows()); }
-void UI::scroll_home() {
-    int max_off = static_cast<int>(lines_.size()) - viewport_rows();
-    scroll_offset_ = max_off > 0 ? static_cast<size_t>(max_off) : 0;
-}
-void UI::scroll_end() { scroll_offset_ = 0; }
-bool UI::at_bottom() const { return scroll_offset_ == 0; }
 
 void UI::set_input(const std::string& s) {
     input_ = s;
@@ -626,7 +630,7 @@ void UI::draw_input() {
     term_.clear_line();
     std::string prefix = "> ";
     write_styled(term_, STYLE_BOLD | STYLE_GREEN, prefix);
-    // show input, handle overflow simply: show tail around cursor
+    // Show a window of the input around the cursor when it overflows.
     int avail = term_.cols() - static_cast<int>(prefix.size());
     if (avail < 4) avail = 4;
     std::string shown = input_;
@@ -650,7 +654,6 @@ void UI::redraw() {
     draw_viewport();
     draw_input();
     term_.show_cursor();
-    // cursor already placed in draw_input
 }
 
 // Reprint the conversation window sequentially so it stays readable after
@@ -692,7 +695,6 @@ void UI::farewell() {
 
 void UI::on_resize() {
     term_.update_size();
-    // re-wrap would be ideal; for simplicity just redraw
     redraw();
 }
 
@@ -726,7 +728,6 @@ bool UI::confirm(InputReader& in, const std::string& prompt) {
 }
 
 void UI::message(const std::string& msg, int style) {
-    last_message_ = msg;
     append(msg, style);
 }
 

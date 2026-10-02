@@ -2,9 +2,6 @@
 #include "util.hpp"
 #include <fstream>
 #include <sstream>
-#include <array>
-#include <memory>
-#include <cstdio>
 #include <cstring>
 #include <cerrno>
 #include <csignal>
@@ -172,8 +169,7 @@ ToolResult ToolRunner::run(const std::string& name,
     if (!known) {
         return {false, "unknown tool \"" + name +
                            "\" - available: read_file, write_file, edit_file, "
-                           "list_directory, execute, search",
-                false};
+                           "list_directory, execute, search"};
     }
 
     bool readonly = is_readonly(name);
@@ -182,7 +178,7 @@ ToolResult ToolRunner::run(const std::string& name,
         // scrollback, so the prompt only needs the question itself.
         std::string prompt = "Execute " + name + "? [y/N] ";
         if (!confirm_fn || !confirm_fn(prompt)) {
-            return {false, "Cancelled by user.", false};
+            return {false, "Cancelled by user."};
         }
     }
 
@@ -206,34 +202,34 @@ ToolResult ToolRunner::run(const std::string& name,
 }
 
 ToolResult ToolRunner::read_file(const nlohmann::json& args) {
-    if (!args.contains("path")) return {false, "missing required argument \"path\"", false};
-    if (!args["path"].is_string()) return {false, "argument \"path\" must be a string", false};
+    if (!args.contains("path")) return {false, "missing required argument \"path\""};
+    if (!args["path"].is_string()) return {false, "argument \"path\" must be a string"};
     std::string arg = args["path"].get<std::string>();
     auto sp = safe_path(arg);
-    if (!sp) return {false, path_denied(arg), false};
+    if (!sp) return {false, path_denied(arg)};
 
     std::string why = file_reason(*sp);
-    if (!why.empty()) return {false, why, false};
+    if (!why.empty()) return {false, why};
 
     bool paging = false;
     long start = 1;
     long limit = 0;  // 0 = to end of file
     if (args.contains("start")) {
         if (!args["start"].is_number_integer() || args["start"].get<long>() < 1)
-            return {false, "argument \"start\" must be a positive integer", false};
+            return {false, "argument \"start\" must be a positive integer"};
         start = args["start"].get<long>();
         paging = true;
     }
     if (args.contains("limit")) {
         if (!args["limit"].is_number_integer() || args["limit"].get<long>() < 1)
-            return {false, "argument \"limit\" must be a positive integer", false};
+            return {false, "argument \"limit\" must be a positive integer"};
         limit = args["limit"].get<long>();
         paging = true;
     }
 
     errno = 0;
     std::ifstream in(*sp, std::ios::binary);
-    if (!in) return {false, os_error("cannot open", *sp), false};
+    if (!in) return {false, os_error("cannot open", *sp)};
 
     if (paging) {
         // Line-based slice: stream with getline and stop at the limit, so
@@ -244,8 +240,7 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
         if (util::looks_binary(head)) {
             return {false,
                     "refusing to read binary/non-text file: " + *sp +
-                        ". Use execute with hexdump/od/file if you need binary inspection.",
-                    false};
+                        ". Use execute with hexdump/od/file if you need binary inspection."};
         }
         in.clear();
         in.seekg(0);
@@ -260,10 +255,10 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
             if (limit > 0 && static_cast<long>(lines.size()) >= limit) break;
         }
         if (lines.empty()) {
-            if (lineno == 0) return {false, "file is empty: " + *sp, false};
+            if (lineno == 0) return {false, "file is empty: " + *sp};
             return {false, "start line " + std::to_string(start) + " is past the end of " +
                                *sp + " (" + std::to_string(lineno) +
-                               (lineno == 1 ? " line)" : " lines)"), false};
+                               (lineno == 1 ? " line)" : " lines)")};
         }
 
         // Total line count if we reached EOF (or stopped exactly at it).
@@ -290,12 +285,12 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
         if (text.size() > cfg_.max_file_bytes)
             text = util::truncate(text, cfg_.max_file_bytes);
         text = util::sanitize_utf8(header + "\n" + text);
-        return {true, text, false};
+        return {true, text};
     }
 
     in.seekg(0, std::ios::end);
     auto sz = in.tellg();
-    if (sz < 0) return {false, "cannot size file", false};
+    if (sz < 0) return {false, "cannot size file"};
 
     size_t to_read = static_cast<size_t>(sz);
     bool truncated = false;
@@ -313,8 +308,7 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
         return {false,
                 "refusing to read binary/non-text file: " + *sp +
                     " (" + std::to_string(static_cast<size_t>(sz)) + " bytes). "
-                    "Use execute with hexdump/od/file if you need binary inspection.",
-                false};
+                    "Use execute with hexdump/od/file if you need binary inspection."};
     }
 
     // Ensure content is valid UTF-8 for JSON / Ollama
@@ -326,65 +320,65 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
         // sanitize should always produce valid UTF-8; belt-and-suspenders
         text = util::sanitize_utf8(text);
     }
-    return {true, text, false};
+    return {true, text};
 }
 
 ToolResult ToolRunner::write_file(const nlohmann::json& args) {
-    if (!args.contains("path")) return {false, "missing required argument \"path\"", false};
-    if (!args["path"].is_string()) return {false, "argument \"path\" must be a string", false};
-    if (!args.contains("content")) return {false, "missing required argument \"content\"", false};
-    if (!args["content"].is_string()) return {false, "argument \"content\" must be a string", false};
+    if (!args.contains("path")) return {false, "missing required argument \"path\""};
+    if (!args["path"].is_string()) return {false, "argument \"path\" must be a string"};
+    if (!args.contains("content")) return {false, "missing required argument \"content\""};
+    if (!args["content"].is_string()) return {false, "argument \"content\" must be a string"};
     std::string arg = args["path"].get<std::string>();
     auto sp = safe_path(arg);
-    if (!sp) return {false, path_denied(arg), false};
+    if (!sp) return {false, path_denied(arg)};
 
     std::error_code ec;
     if (fs::is_directory(*sp, ec))
-        return {false, "\"" + *sp + "\" is a directory - cannot write a file over it", false};
+        return {false, "\"" + *sp + "\" is a directory - cannot write a file over it"};
 
     fs::path p(*sp);
     if (p.has_parent_path()) {
         fs::create_directories(p.parent_path(), ec);
         if (ec)
-            return {false, "cannot create parent directories for " + *sp + ": " + ec.message(), false};
+            return {false, "cannot create parent directories for " + *sp + ": " + ec.message()};
     }
 
     errno = 0;
     std::ofstream out(*sp, std::ios::binary | std::ios::trunc);
-    if (!out) return {false, os_error("cannot write", *sp), false};
+    if (!out) return {false, os_error("cannot write", *sp)};
     out << args["content"].get<std::string>();
-    if (!out) return {false, os_error("cannot write", *sp), false};
-    return {true, "Wrote " + *sp + " (" + std::to_string(args["content"].get<std::string>().size()) + " bytes)", false};
+    if (!out) return {false, os_error("cannot write", *sp)};
+    return {true, "Wrote " + *sp + " (" + std::to_string(args["content"].get<std::string>().size()) + " bytes)"};
 }
 
 ToolResult ToolRunner::edit_file(const nlohmann::json& args) {
-    if (!args.contains("path")) return {false, "missing required argument \"path\"", false};
-    if (!args["path"].is_string()) return {false, "argument \"path\" must be a string", false};
-    if (!args.contains("old_text")) return {false, "missing required argument \"old_text\"", false};
-    if (!args["old_text"].is_string()) return {false, "argument \"old_text\" must be a string", false};
-    if (!args.contains("new_text")) return {false, "missing required argument \"new_text\"", false};
-    if (!args["new_text"].is_string()) return {false, "argument \"new_text\" must be a string", false};
+    if (!args.contains("path")) return {false, "missing required argument \"path\""};
+    if (!args["path"].is_string()) return {false, "argument \"path\" must be a string"};
+    if (!args.contains("old_text")) return {false, "missing required argument \"old_text\""};
+    if (!args["old_text"].is_string()) return {false, "argument \"old_text\" must be a string"};
+    if (!args.contains("new_text")) return {false, "missing required argument \"new_text\""};
+    if (!args["new_text"].is_string()) return {false, "argument \"new_text\" must be a string"};
     std::string arg = args["path"].get<std::string>();
     auto sp = safe_path(arg);
-    if (!sp) return {false, path_denied(arg), false};
+    if (!sp) return {false, path_denied(arg)};
 
     std::string why = file_reason(*sp);
-    if (!why.empty()) return {false, why, false};
+    if (!why.empty()) return {false, why};
 
     errno = 0;
     std::ifstream in(*sp, std::ios::binary);
-    if (!in) return {false, os_error("cannot open", *sp), false};
+    if (!in) return {false, os_error("cannot open", *sp)};
     std::ostringstream ss;
     ss << in.rdbuf();
     std::string content = ss.str();
     std::string old_t = args["old_text"].get<std::string>();
     std::string new_t = args["new_text"].get<std::string>();
     if (old_t.empty())
-        return {false, "argument \"old_text\" must not be empty", false};
+        return {false, "argument \"old_text\" must not be empty"};
 
     size_t pos = content.find(old_t);
     if (pos == std::string::npos)
-        return {false, "old_text not found in " + *sp, false};
+        return {false, "old_text not found in " + *sp};
     size_t matches = 1;
     for (size_t p = content.find(old_t, pos + old_t.size()); p != std::string::npos;
          p = content.find(old_t, p + old_t.size())) {
@@ -392,29 +386,29 @@ ToolResult ToolRunner::edit_file(const nlohmann::json& args) {
     }
     if (matches > 1)
         return {false, "old_text matches " + std::to_string(matches) + " times in " + *sp +
-                           " - add more surrounding context so it matches exactly once", false};
+                           " - add more surrounding context so it matches exactly once"};
 
     content.replace(pos, old_t.size(), new_t);
     errno = 0;
     std::ofstream out(*sp, std::ios::binary | std::ios::trunc);
-    if (!out) return {false, os_error("cannot write", *sp), false};
+    if (!out) return {false, os_error("cannot write", *sp)};
     out << content;
-    if (!out) return {false, os_error("cannot write", *sp), false};
-    return {true, "Edited " + *sp, false};
+    if (!out) return {false, os_error("cannot write", *sp)};
+    return {true, "Edited " + *sp};
 }
 
 ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     std::string path = ".";
     if (args.contains("path")) {
         if (!args["path"].is_string())
-            return {false, "argument \"path\" must be a string", false};
+            return {false, "argument \"path\" must be a string"};
         path = args["path"].get<std::string>();
     }
     auto sp = safe_path(path);
-    if (!sp) return {false, path_denied(path), false};
+    if (!sp) return {false, path_denied(path)};
 
     std::string why = dir_reason(*sp);
-    if (!why.empty()) return {false, why, false};
+    if (!why.empty()) return {false, why};
 
     // Prefix entries with the path that was asked for, so the results can be
     // passed straight to read_file/edit_file without losing the directory.
@@ -431,7 +425,7 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     // Manual iteration with ec: the throwing overloads (is_directory() and
     // range-for increment) would terminate on a stat error mid-listing.
     fs::directory_iterator it(*sp, ec);
-    if (ec) return {false, "cannot list " + *sp + ": " + ec.message(), false};
+    if (ec) return {false, "cannot list " + *sp + ": " + ec.message()};
     for (fs::directory_iterator end; it != end; it.increment(ec)) {
         if (ec) break;
         std::string name = it->path().filename().string();
@@ -439,28 +433,28 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
         if (it->is_directory(tec)) name += "/";
         entries.push_back(prefix + name);
     }
-    if (ec) return {false, "cannot list " + *sp + ": " + ec.message(), false};
+    if (ec) return {false, "cannot list " + *sp + ": " + ec.message()};
     std::sort(entries.begin(), entries.end());
     for (auto& e : entries) out << e << "\n";
     if (entries.empty()) out << "(empty)\n";
-    return {true, out.str(), false};
+    return {true, out.str()};
 }
 
 ToolResult ToolRunner::execute(const nlohmann::json& args) {
-    if (!args.contains("command")) return {false, "missing required argument \"command\"", false};
-    if (!args["command"].is_string()) return {false, "argument \"command\" must be a string", false};
+    if (!args.contains("command")) return {false, "missing required argument \"command\""};
+    if (!args["command"].is_string()) return {false, "argument \"command\" must be a string"};
     std::string cmd = args["command"].get<std::string>();
 
     // Run via /bin/sh -c in cwd, capture stdout+stderr, limit output
     int pipefd[2];
     if (pipe(pipefd) != 0)
-        return {false, std::string("pipe failed: ") + std::strerror(errno), false};
+        return {false, std::string("pipe failed: ") + std::strerror(errno)};
 
     pid_t pid = fork();
     if (pid < 0) {
         int e = errno;
         close(pipefd[0]); close(pipefd[1]);
-        return {false, std::string("fork failed: ") + std::strerror(e), false};
+        return {false, std::string("fork failed: ") + std::strerror(e)};
     }
     if (pid == 0) {
         // child - only async-signal-safe calls from here on
@@ -500,7 +494,7 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     }
     if (w < 0) {
         // status was never filled in - reporting it would claim success
-        return {false, std::string("waitpid failed: ") + std::strerror(errno), false};
+        return {false, std::string("waitpid failed: ") + std::strerror(errno)};
     }
     // Reaching the limit closes the pipe under the child (SIGPIPE, reported by
     // the shell as 141), so the exit status is our doing and not a failure.
@@ -514,25 +508,25 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
         output += "\n[exit code " + std::to_string(code) + "]\n";
     }
     if (output.empty()) output = "(no output)";
-    return {code == 0 || truncated, output, false};
+    return {code == 0 || truncated, output};
 }
 
 ToolResult ToolRunner::search(const nlohmann::json& args) {
-    if (!args.contains("pattern")) return {false, "missing required argument \"pattern\"", false};
-    if (!args["pattern"].is_string()) return {false, "argument \"pattern\" must be a string", false};
+    if (!args.contains("pattern")) return {false, "missing required argument \"pattern\""};
+    if (!args["pattern"].is_string()) return {false, "argument \"pattern\" must be a string"};
     std::string pattern = args["pattern"].get<std::string>();
-    if (pattern.empty()) return {false, "argument \"pattern\" must not be empty", false};
+    if (pattern.empty()) return {false, "argument \"pattern\" must not be empty"};
     std::string path = ".";
     if (args.contains("path")) {
         if (!args["path"].is_string())
-            return {false, "argument \"path\" must be a string", false};
+            return {false, "argument \"path\" must be a string"};
         path = args["path"].get<std::string>();
     }
     auto sp = safe_path(path);
-    if (!sp) return {false, path_denied(path), false};
+    if (!sp) return {false, path_denied(path)};
     std::error_code ec;
     if (!fs::exists(*sp, ec) || ec)
-        return {false, "search path does not exist: " + *sp, false};
+        return {false, "search path does not exist: " + *sp};
 
     // Prefer rg, fall back to grep -r. Exit code 1 means "no matches", which is
     // a normal result, so normalize it to 0; any other failure stays an error.

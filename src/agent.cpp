@@ -244,6 +244,15 @@ bool Agent::rename_session(const std::string& new_name) {
 // (default / session-<hex>) that already have real conversation context.
 // The answer is slugged to lowercase hyphenated form and de-duplicated
 // against the existing session files (name-2, name-3, ...).
+namespace {
+
+// The title prompt's <conversation> block must not leak into the model's
+// single-line answer; keep the session's real messages as the request context.
+constexpr size_t kTitleMaxMessages = 8;
+constexpr size_t kTitleMaxMsgChars = 300;
+
+}  // namespace
+
 void Agent::maybe_generate_title() {
     if (title_attempted_) return;
     if (!auto_named(session_.name)) return;
@@ -263,7 +272,7 @@ void Agent::maybe_generate_title() {
               "No quotes, no punctuation, no explanation.\n"
               "Example: debugging-application\n\n"
            << "<conversation>\n"
-           << transcript(session_.messages, 8, 300, false)
+           << transcript(session_.messages, kTitleMaxMessages, kTitleMaxMsgChars, false)
            << "</conversation>\n";
 
     WorkingGuard work(ui_);
@@ -277,6 +286,9 @@ void Agent::maybe_generate_title() {
     Terminal::sigint_count.store(0);
     auto should_abort = abort_watcher();
 
+    // Title generation runs after the main loop's turn is done, so the flags it
+    // consumes (abort_gen_ / cancel_all_) cannot affect a response in flight.
+    // It must never clear the flow: aborting only cancels the naming.
     std::vector<nlohmann::json> msgs = {
         {{"role", "user"}, {"content", prompt.str()}}};
     nlohmann::json final_msg;
@@ -284,10 +296,14 @@ void Agent::maybe_generate_title() {
     bool ok = ollama_->chat_stream(cfg_.model, msgs, nlohmann::json::array(),
                                    nullptr, nullptr, nullptr, should_abort,
                                    &err, &final_msg);
+    // Leave the agent runnable regardless of the naming outcome.
+    if (abort_gen_) {
+        abort_gen_ = false;
+        cancel_all_ = false;
+    }
     ui_.append("");
 
-    if (err == "interrupted" || abort_gen_) {
-        abort_gen_ = false;
+    if (err == "interrupted") {
         cancel_all_ = false;
         ui_.message("[title] cancelled", STYLE_YELLOW);
         ui_.redraw();
@@ -348,8 +364,6 @@ void Agent::load_session(const std::string& name) {
     maybe_generate_title();  // auto-named sessions get an AI title
 }
 
-// Draw one stored message the same way on startup and on /session load,
-// including tool calls and their results.
 namespace {
 
 // Shared by the live tool loop and session replay so tool params always
@@ -385,6 +399,8 @@ std::vector<std::string> tool_arg_lines(const nlohmann::json& tc) {
 
 }  // namespace
 
+// Draw one stored message the same way on startup and on /session load,
+// including tool calls and their results.
 void Agent::replay_message(const Message& m) {
     if (m.role == Role::System) return;
     if (m.role == Role::User) {
@@ -495,7 +511,6 @@ bool Agent::select_model_interactive() {
     ui_.append("Select number or name (empty cancels):");
     ui_.redraw();
 
-    // simple line read
     std::string line;
     ui_.set_input("");
     for (;;) {
@@ -520,7 +535,6 @@ bool Agent::select_model_interactive() {
     line = util::trim(line);
     if (line.empty()) return false;
 
-    // number?
     try {
         size_t idx = static_cast<size_t>(std::stoul(line));
         if (idx >= 1 && idx <= models->size()) {
@@ -533,7 +547,6 @@ bool Agent::select_model_interactive() {
         }
     } catch (...) {}
 
-    // name match
     for (auto& m : *models) {
         if (m.name == line || m.name.find(line) != std::string::npos) {
             cfg_.model = m.name;
@@ -549,7 +562,6 @@ bool Agent::select_model_interactive() {
 }
 
 void Agent::handle_command(const std::string& line) {
-    // simple split on space
     std::vector<std::string> tok;
     {
         std::istringstream iss(line);
@@ -753,10 +765,9 @@ void Agent::do_compact(bool automatic) {
     ui_.append(tag + " summarizing " + std::to_string(before) + " messages...", 1);
     ui_.redraw();
 
-    // Compaction prompt modeled on opencode's anchored-summary compaction:
-    // a <conversation> block followed by an exact Markdown <template> the
-    // model must reproduce, so the result is a structured handoff another
-    // agent can continue from.
+    // Anchored-summary compaction: a <conversation> block followed by an exact
+    // Markdown <template> the model must reproduce, so the result is a
+    // structured handoff another agent can continue from.
     std::ostringstream prompt;
     prompt << "Here is the conversation so far:\n\n<conversation>\n"
            << transcript(session_.messages,
@@ -989,15 +1000,15 @@ void Agent::run_turn(const std::string& text) {
         handle_command(cmd);
         ui_.redraw();
     }
-
-    // First completed turn gives an auto-named session its AI title.
-    if (running_) maybe_generate_title();
 }
 
 void Agent::handle_prompt(const std::string& text) {
     if (text.empty()) return;
     run_turn(text);
     flush_queue();
+    // Name the session only once the whole batch/queue is done: title
+    // generation must never interrupt an AI loop that is still running.
+    if (running_ && !generating_) maybe_generate_title();
 }
 
 // Send queued messages FIFO. Consecutive plain messages are batched into a
@@ -1205,7 +1216,6 @@ void Agent::run_generation() {
     ui_.append("");  // blank after response
     ui_.redraw();
 
-    // Process tool calls if any
     if (!cancel_all_ && !asst.tool_calls.is_null() && asst.tool_calls.is_array() &&
         !asst.tool_calls.empty()) {
         process_tool_calls(final_msg);
