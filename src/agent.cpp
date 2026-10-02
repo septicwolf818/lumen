@@ -396,7 +396,8 @@ void Agent::replay_message(const Message& m) {
             ui_.append("");
         } else {
             ui_.append("You:", STYLE_BOLD);
-            ui_.append(m.content);
+            if (cfg_.markdown) ui_.append_markdown(m.content);
+            else ui_.append(m.content);
             ui_.append("");
         }
     } else if (m.role == Role::Assistant) {
@@ -408,7 +409,10 @@ void Agent::replay_message(const Message& m) {
             ui_.append(m.thinking, STYLE_DIM);
             if (has_content || has_tools) ui_.append("");
         }
-        if (has_content) ui_.append(m.content);
+        if (has_content) {
+            if (cfg_.markdown) ui_.append_markdown(m.content);
+            else ui_.append(m.content);
+        }
         if (has_tools) {
             // Mirror the live layout: blank after the response, then the tool
             // call with its params - the [result] that follows attaches
@@ -962,7 +966,8 @@ void Agent::run_turn(const std::string& text) {
     session_.messages.push_back(user);
 
     ui_.append("You:", STYLE_BOLD);
-    ui_.append(text);
+    if (cfg_.markdown) ui_.append_markdown(text);
+    else ui_.append(text);
     ui_.append("");
     ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);
     ui_.redraw();
@@ -1265,6 +1270,7 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
 }
 
 int Agent::run() {
+    ui_.set_markdown(cfg_.markdown);
     init_session();
     update_status();
     if (cfg_.model.empty()) {

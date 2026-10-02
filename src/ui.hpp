@@ -22,20 +22,26 @@
 // or truecolor (38;2;r;g;b) sequences are emitted.
 // STYLE_DIM == 1, so append(text, 1) callers keep their old meaning.
 enum UiStyle : int {
-    STYLE_NORMAL  = 0,
-    STYLE_DIM     = 1 << 0,
-    STYLE_BOLD    = 1 << 1,
-    STYLE_RED     = 1 << 2,
-    STYLE_GREEN   = 1 << 3,
-    STYLE_YELLOW  = 1 << 4,
-    STYLE_BLUE    = 1 << 5,
-    STYLE_MAGENTA = 1 << 6,
-    STYLE_CYAN    = 1 << 7,
+    STYLE_NORMAL    = 0,
+    STYLE_DIM       = 1 << 0,
+    STYLE_BOLD      = 1 << 1,
+    STYLE_RED       = 1 << 2,
+    STYLE_GREEN     = 1 << 3,
+    STYLE_YELLOW    = 1 << 4,
+    STYLE_BLUE      = 1 << 5,
+    STYLE_MAGENTA   = 1 << 6,
+    STYLE_CYAN      = 1 << 7,
+    STYLE_UNDERLINE = 1 << 8,
+    STYLE_REVERSE   = 1 << 9,
+};
+
+struct Span {
+    std::string text;
+    int style = 0;  // UiStyle bitmask
 };
 
 struct DisplayLine {
-    std::string text;
-    int style = 0;  // UiStyle bitmask
+    std::vector<Span> spans;
 };
 
 class UI {
@@ -52,6 +58,10 @@ public:
     // Append a line (or multi-line) to scrollback. Auto-scrolls if at bottom.
     void append(const std::string& text, int style = 0);
     void append_raw(const std::string& text);  // no wrap, as-is
+
+    // Render assistant/user text as Markdown when the feature is enabled.
+    void set_markdown(bool on) { markdown_ = on; }
+    void append_markdown(const std::string& text);
 
     // Streaming: append tokens to the last "open" assistant line.
     // style applies to the whole streamed block (STYLE_DIM for thinking).
@@ -139,9 +149,12 @@ private:
     uint64_t spinner_last_ms_ = 0;
     size_t marquee_offset_ = 0;
     uint64_t marquee_last_ms_ = 0;
+    bool markdown_ = false;
 
     void wrap_and_push(const std::string& text, int style);
-    std::vector<std::string> wrap(const std::string& text, int width) const;
+    std::vector<DisplayLine> wrap_spans(const std::vector<Span>& spans, int width) const;
+    std::vector<DisplayLine> render_markdown(const std::string& text, int width) const;
+    void push_lines(std::vector<DisplayLine> lines);
     void viewport_window(int& start, int& rows) const;
     std::vector<std::pair<std::string, int>> status_parts() const;
     void draw_status();

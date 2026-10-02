@@ -132,7 +132,8 @@ expands to your home directory (`/cd ~/projects`).
   "auto_approve_tools": false,
   "max_file_bytes": 262144,
   "max_tool_output_bytes": 65536,
-  "allow_path_escape": false
+  "allow_path_escape": false,
+  "markdown": false
 }
 ```
 
@@ -141,6 +142,23 @@ Environment override:
 ```bash
 export OLLAMA_HOST=http://127.0.0.1:11434
 ```
+
+## Markdown
+
+Off by default, so the plain console output stays lightweight. Enable it with
+`"markdown": true` in the config to render assistant and user messages:
+
+- `**bold**`, `*italic*`, `~~strike~~` (italic is shown as a colour, the Linux
+  console has no italics)
+- `` `inline code` `` and fenced code blocks with an inverted background
+- fenced code blocks for `python` and `bash`/`sh` get basic syntax highlighting
+- ATX headings, unordered/ordered lists, blockquotes and thematic breaks
+- GFM-style tables with `+`/`-`/`|` borders and per-column alignment
+- links are shown as `text (url)`
+
+Messages are rendered once the response finishes, so a half-streamed fence or
+emphasis marker never makes the block jump around. Rendering uses only the
+attributes the Linux console supports; no italics and no clickable hyperlinks.
 
 Output uses only the ANSI attributes the Linux console supports (bold, dim and
 the 8 basic colours). Set `NO_COLOR` (non-empty) to disable all colour and

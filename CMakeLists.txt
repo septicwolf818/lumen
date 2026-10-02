@@ -17,6 +17,7 @@ add_executable(lumen
     src/terminal.cpp
     src/input.cpp
     src/ui.cpp
+    src/markdown.cpp
     src/ollama.cpp
     src/session.cpp
     src/tools.cpp

@@ -1,0 +1,941 @@
+#include "markdown.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+
+namespace md {
+namespace {
+
+constexpr size_t npos = std::string::npos;
+
+bool is_space(char c) { return c == ' ' || c == '\t'; }
+
+std::string rtrim(std::string s) {
+    while (!s.empty() && is_space(s.back())) s.pop_back();
+    return s;
+}
+std::string ltrim(std::string s) {
+    size_t i = 0;
+    while (i < s.size() && is_space(s[i])) ++i;
+    return s.substr(i);
+}
+std::string trim(std::string s) { return ltrim(rtrim(s)); }
+
+size_t utf8_char_len(unsigned char c) {
+    if ((c & 0xE0) == 0xC0) return 2;
+    if ((c & 0xF0) == 0xE0) return 3;
+    if ((c & 0xF8) == 0xF0) return 4;
+    return 1;
+}
+
+size_t utf8_len(const std::string& s) {
+    size_t i = 0, n = 0;
+    while (i < s.size()) {
+        size_t l = utf8_char_len(static_cast<unsigned char>(s[i]));
+        if (i + l > s.size()) l = 1;
+        i += l;
+        ++n;
+    }
+    return n;
+}
+
+std::string utf8_prefix(const std::string& s, size_t n) {
+    size_t i = 0, c = 0;
+    while (i < s.size() && c < n) {
+        size_t l = utf8_char_len(static_cast<unsigned char>(s[i]));
+        if (i + l > s.size()) l = 1;
+        i += l;
+        ++c;
+    }
+    return s.substr(0, i);
+}
+
+std::vector<std::string> split_lines(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == '\n') {
+            out.push_back(cur);
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    out.push_back(cur);
+    for (auto& l : out)
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+    return out;
+}
+
+// ---------------------------------------------------------------- inline ---
+
+Inline text_node(const std::string& t) {
+    Inline in;
+    in.kind = Inline::Text;
+    in.text = t;
+    return in;
+}
+
+std::vector<Inline> parse_inlines(const std::string& s);
+
+bool escape_char(char c) {
+    static const std::string special = "\\`*_{}[]()#+-.!>~|";
+    return special.find(c) != npos;
+}
+
+std::vector<Inline> parse_inlines(const std::string& s) {
+    std::vector<Inline> out;
+    std::string buf;
+    auto flush = [&]() {
+        if (!buf.empty()) {
+            out.push_back(text_node(buf));
+            buf.clear();
+        }
+    };
+    size_t i = 0, n = s.size();
+    while (i < n) {
+        char c = s[i];
+        if (c == '\\' && i + 1 < n && escape_char(s[i + 1])) {
+            buf.push_back(s[i + 1]);
+            i += 2;
+            continue;
+        }
+        if (c == '\\' && i + 1 < n && s[i + 1] == '\n') {
+            flush();
+            Inline b;
+            b.kind = Inline::Break;
+            out.push_back(b);
+            i += 2;
+            continue;
+        }
+        if (c == '\n') {
+            if (buf.size() >= 2 && buf[buf.size() - 1] == ' ' && buf[buf.size() - 2] == ' ') {
+                while (!buf.empty() && buf.back() == ' ') buf.pop_back();
+                flush();
+                Inline b;
+                b.kind = Inline::Break;
+                out.push_back(b);
+            } else {
+                buf.push_back(' ');
+            }
+            ++i;
+            continue;
+        }
+        if (c == '`') {
+            size_t run = 1;
+            while (i + run < n && s[i + run] == '`') ++run;
+            std::string ticks(run, '`');
+            size_t close = s.find(ticks, i + run);
+            if (close != npos) {
+                std::string content = s.substr(i + run, close - (i + run));
+                if (content.size() >= 2 && content.front() == ' ' && content.back() == ' ' &&
+                    content.find_first_not_of(' ') != npos)
+                    content = content.substr(1, content.size() - 2);
+                flush();
+                Inline in;
+                in.kind = Inline::Code;
+                in.text = content;
+                out.push_back(in);
+                i = close + run;
+                continue;
+            }
+        }
+        if (c == '[' || (c == '!' && i + 1 < n && s[i + 1] == '[')) {
+            size_t open = (c == '!') ? i + 1 : i;
+            size_t close = s.find(']', open + 1);
+            if (close != npos && close + 1 < n && s[close + 1] == '(') {
+                size_t paren = s.find(')', close + 2);
+                if (paren != npos) {
+                    std::string label = s.substr(open + 1, close - (open + 1));
+                    std::string url = s.substr(close + 2, paren - (close + 2));
+                    size_t sp = url.find_first_of(" \t");
+                    if (sp != npos) url = url.substr(0, sp);
+                    flush();
+                    Inline in;
+                    in.kind = Inline::Link;
+                    in.text = label;
+                    in.url = url;
+                    out.push_back(in);
+                    i = paren + 1;
+                    continue;
+                }
+            }
+        }
+        if (c == '<') {
+            size_t gt = s.find('>', i + 1);
+            if (gt != npos) {
+                std::string inner = s.substr(i + 1, gt - (i + 1));
+                if (inner.find("://") != npos || inner.find('@') != npos) {
+                    flush();
+                    Inline in;
+                    in.kind = Inline::Link;
+                    in.text = inner;
+                    in.url = inner;
+                    out.push_back(in);
+                    i = gt + 1;
+                    continue;
+                }
+            }
+        }
+        if ((c == '*' || c == '_') && i + 1 < n && s[i + 1] == c) {
+            std::string d(2, c);
+            size_t close = s.find(d, i + 2);
+            if (close != npos) {
+                flush();
+                Inline in;
+                in.kind = Inline::Strong;
+                in.children = parse_inlines(s.substr(i + 2, close - (i + 2)));
+                out.push_back(in);
+                i = close + 2;
+                continue;
+            }
+        }
+        if (c == '~' && i + 1 < n && s[i + 1] == '~') {
+            size_t close = s.find("~~", i + 2);
+            if (close != npos) {
+                flush();
+                Inline in;
+                in.kind = Inline::Strike;
+                in.children = parse_inlines(s.substr(i + 2, close - (i + 2)));
+                out.push_back(in);
+                i = close + 2;
+                continue;
+            }
+        }
+        if (c == '*' || c == '_') {
+            size_t close = s.find(c, i + 1);
+            if (close != npos && close > i + 1) {
+                flush();
+                Inline in;
+                in.kind = Inline::Emph;
+                in.children = parse_inlines(s.substr(i + 1, close - (i + 1)));
+                out.push_back(in);
+                i = close + 1;
+                continue;
+            }
+        }
+        if (c == 'h' && (s.compare(i, 7, "http://") == 0 || s.compare(i, 8, "https://") == 0)) {
+            size_t j = i;
+            while (j < n && !is_space(s[j]) && s[j] != ')' && s[j] != ',') ++j;
+            std::string url = s.substr(i, j - i);
+            flush();
+            Inline in;
+            in.kind = Inline::Link;
+            in.text = url;
+            in.url = url;
+            out.push_back(in);
+            i = j;
+            continue;
+        }
+        buf.push_back(c);
+        ++i;
+    }
+    flush();
+    return out;
+}
+
+// ----------------------------------------------------------------- block ---
+
+bool parse_heading(const std::string& line, int& level, std::string& text) {
+    std::string t = ltrim(line);
+    size_t k = 0;
+    while (k < t.size() && t[k] == '#') ++k;
+    if (k < 1 || k > 6) return false;
+    if (k < t.size() && t[k] != ' ' && t[k] != '\t') return false;
+    level = static_cast<int>(k);
+    text = trim(t.substr(k));
+    while (!text.empty() && text.back() == '#') text.pop_back();
+    text = trim(text);
+    return true;
+}
+
+bool is_rule(const std::string& line) {
+    std::string t = ltrim(line);
+    if (t.empty()) return false;
+    char c = t[0];
+    if (c != '-' && c != '*' && c != '_') return false;
+    int cnt = 0;
+    for (char x : t) {
+        if (x == c)
+            ++cnt;
+        else if (x != ' ' && x != '\t')
+            return false;
+    }
+    return cnt >= 3;
+}
+
+bool starts_fence(const std::string& line, char& ch, size_t& len, std::string& info) {
+    std::string t = ltrim(line);
+    if (t.size() < 3) return false;
+    char c = t[0];
+    if (c != '`' && c != '~') return false;
+    size_t k = 0;
+    while (k < t.size() && t[k] == c) ++k;
+    if (k < 3) return false;
+    ch = c;
+    len = k;
+    info = trim(t.substr(k));
+    return true;
+}
+
+struct ListMark {
+    bool valid = false;
+    bool ordered = false;
+    size_t indent = 0;
+    int start = 1;
+    size_t marker_len = 0;
+    std::string content;
+};
+
+ListMark parse_list_marker(const std::string& line) {
+    ListMark m;
+    size_t i = 0;
+    while (i < line.size() && line[i] == ' ') ++i;
+    m.indent = i;
+    if (i >= line.size()) return m;
+    char c = line[i];
+    if (c == '-' || c == '*' || c == '+') {
+        if (i + 1 < line.size() && (line[i + 1] == ' ' || line[i + 1] == '\t')) {
+            m.valid = true;
+            m.ordered = false;
+            m.marker_len = 2;
+            m.content = ltrim(line.substr(i + 2));
+        }
+        return m;
+    }
+    if (std::isdigit(static_cast<unsigned char>(c))) {
+        size_t j = i;
+        while (j < line.size() && std::isdigit(static_cast<unsigned char>(line[j]))) ++j;
+        if (j < line.size() && (line[j] == '.' || line[j] == ')') && j + 1 < line.size() &&
+            (line[j + 1] == ' ' || line[j + 1] == '\t')) {
+            m.valid = true;
+            m.ordered = true;
+            m.start = std::atoi(line.substr(i, j - i).c_str());
+            m.marker_len = (j - i) + 2;
+            m.content = ltrim(line.substr(j + 2));
+        }
+    }
+    return m;
+}
+
+std::vector<std::string> split_row(const std::string& line) {
+    std::string t = trim(line);
+    std::vector<std::string> cells;
+    std::string cur;
+    for (char c : t) {
+        if (c == '|') {
+            cells.push_back(cur);
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    cells.push_back(cur);
+    if (!cells.empty() && trim(cells.front()).empty()) cells.erase(cells.begin());
+    if (!cells.empty() && trim(cells.back()).empty()) cells.pop_back();
+    for (auto& c : cells) c = trim(c);
+    return cells;
+}
+
+bool is_table_delim(const std::string& line, std::vector<int>& aligns) {
+    std::string t = trim(line);
+    if (t.find('|') == npos) return false;
+    auto cells = split_row(t);
+    if (cells.empty()) return false;
+    std::vector<int> a;
+    for (auto cell : cells) {
+        if (cell.empty()) return false;
+        bool left = cell.front() == ':';
+        bool right = cell.back() == ':';
+        std::string dash = cell;
+        if (left) dash.erase(dash.begin());
+        if (right && !dash.empty()) dash.pop_back();
+        dash = trim(dash);
+        if (dash.empty()) return false;
+        for (char x : dash)
+            if (x != '-') return false;
+        a.push_back(left && right ? 1 : (right ? 2 : 0));
+    }
+    aligns = a;
+    return true;
+}
+
+std::vector<Block> parse_blocks(const std::string& src) {
+    auto lines = split_lines(src);
+    std::vector<Block> blocks;
+    size_t i = 0, n = lines.size();
+    while (i < n) {
+        const std::string& line = lines[i];
+        if (trim(line).empty()) {
+            ++i;
+            continue;
+        }
+
+        char fc;
+        size_t fl;
+        std::string info;
+        if (starts_fence(line, fc, fl, info)) {
+            Block b;
+            b.kind = Block::Code;
+            std::string t = trim(info);
+            size_t sp = t.find_first_of(" \t");
+            b.lang = (sp == npos) ? t : t.substr(0, sp);
+            ++i;
+            std::string body;
+            while (i < n) {
+                char cc;
+                size_t cl;
+                std::string ci;
+                if (starts_fence(lines[i], cc, cl, ci) && cc == fc && cl >= fl && trim(ci).empty()) {
+                    ++i;
+                    break;
+                }
+                if (!body.empty()) body += '\n';
+                body += lines[i];
+                ++i;
+            }
+            b.text = body;
+            blocks.push_back(std::move(b));
+            continue;
+        }
+
+        int level;
+        std::string htext;
+        if (parse_heading(line, level, htext)) {
+            Block b;
+            b.kind = Block::Heading;
+            b.level = level;
+            b.inlines = parse_inlines(htext);
+            blocks.push_back(std::move(b));
+            ++i;
+            continue;
+        }
+
+        if (is_rule(line)) {
+            Block b;
+            b.kind = Block::Rule;
+            blocks.push_back(std::move(b));
+            ++i;
+            continue;
+        }
+
+        {
+            std::string lt = ltrim(line);
+            if (!lt.empty() && lt[0] == '>') {
+                std::string content;
+                while (i < n) {
+                    std::string q = ltrim(lines[i]);
+                    if (!q.empty() && q[0] == '>') {
+                        std::string rest = q.substr(1);
+                        if (!rest.empty() && rest[0] == ' ') rest.erase(rest.begin());
+                        if (!content.empty()) content += '\n';
+                        content += rest;
+                        ++i;
+                    } else if (trim(lines[i]).empty()) {
+                        std::string nx = (i + 1 < n) ? ltrim(lines[i + 1]) : std::string();
+                        if (!nx.empty() && nx[0] == '>') {
+                            content += '\n';
+                            ++i;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                Block b;
+                b.kind = Block::Quote;
+                b.children = parse_blocks(content);
+                blocks.push_back(std::move(b));
+                continue;
+            }
+        }
+
+        if (line.find('|') != npos && i + 1 < n) {
+            std::vector<int> aligns;
+            if (is_table_delim(lines[i + 1], aligns)) {
+                Block b;
+                b.kind = Block::Table;
+                auto hdr = split_row(line);
+                TableRow hr;
+                for (size_t c = 0; c < hdr.size(); ++c) {
+                    TableCell cell;
+                    cell.inlines = parse_inlines(hdr[c]);
+                    cell.align = c < aligns.size() ? aligns[c] : 0;
+                    hr.cells.push_back(std::move(cell));
+                }
+                b.rows.push_back(std::move(hr));
+                i += 2;
+                while (i < n && !trim(lines[i]).empty() && trim(lines[i]).find('|') != npos) {
+                    auto cells = split_row(lines[i]);
+                    TableRow r;
+                    for (size_t c = 0; c < cells.size(); ++c) {
+                        TableCell cell;
+                        cell.inlines = parse_inlines(cells[c]);
+                        cell.align = c < aligns.size() ? aligns[c] : 0;
+                        r.cells.push_back(std::move(cell));
+                    }
+                    b.rows.push_back(std::move(r));
+                    ++i;
+                }
+                blocks.push_back(std::move(b));
+                continue;
+            }
+        }
+
+        {
+            ListMark first = parse_list_marker(line);
+            if (first.valid) {
+                bool ordered = first.ordered;
+                size_t base = first.indent;
+                Block b;
+                b.kind = ordered ? Block::OrderedList : Block::BulletList;
+                b.level = first.start;
+                while (i < n) {
+                    ListMark m = parse_list_marker(lines[i]);
+                    if (!m.valid || m.indent != base || m.ordered != ordered) break;
+                    std::string content = m.content;
+                    ++i;
+                    while (i < n) {
+                        if (trim(lines[i]).empty()) {
+                            size_t j = i + 1;
+                            while (j < n && trim(lines[j]).empty()) ++j;
+                            if (j < n) {
+                                ListMark nm = parse_list_marker(lines[j]);
+                                if (nm.valid && nm.indent == base) break;
+                                content += '\n';
+                                ++i;
+                                continue;
+                            }
+                            break;
+                        }
+                        ListMark nm = parse_list_marker(lines[i]);
+                        size_t ind = 0;
+                        while (ind < lines[i].size() && lines[i][ind] == ' ') ++ind;
+                        if (nm.valid && nm.indent <= base) break;
+                        if (ind <= base) break;
+                        size_t strip = std::min(base + 2, lines[i].size());
+                        size_t lead = 0;
+                        while (lead < lines[i].size() && lines[i][lead] == ' ' && lead < strip) ++lead;
+                        content += '\n';
+                        content += lines[i].substr(lead);
+                        ++i;
+                    }
+                    ListItem item;
+                    item.blocks = parse_blocks(content);
+                    b.items.push_back(std::move(item));
+                }
+                blocks.push_back(std::move(b));
+                continue;
+            }
+        }
+
+        {
+            size_t start = i;
+            std::string para;
+            while (i < n && !trim(lines[i]).empty()) {
+                std::string lt = ltrim(lines[i]);
+                char cf;
+                size_t cf_len;
+                std::string cf_info;
+                int lv;
+                std::string ht;
+                std::vector<int> al;
+                if (starts_fence(lines[i], cf, cf_len, cf_info)) break;
+                if (parse_heading(lines[i], lv, ht)) break;
+                if (is_rule(lines[i])) break;
+                if (!lt.empty() && lt[0] == '>') break;
+                if (parse_list_marker(lines[i]).valid) break;
+                if (i + 1 < n && lines[i].find('|') != npos && is_table_delim(lines[i + 1], al)) break;
+                if (!para.empty()) para += '\n';
+                para += lines[i];
+                ++i;
+            }
+            if (i == start) {
+                para = lines[i];
+                ++i;
+            }
+            Block b;
+            b.kind = Block::Paragraph;
+            b.inlines = parse_inlines(para);
+            blocks.push_back(std::move(b));
+            continue;
+        }
+    }
+    return blocks;
+}
+
+// ---------------------------------------------------------------- render ---
+
+struct WrapState {
+    int width = 80;
+    Line cur;
+    Lines out;
+    int col = 0;
+    int pending = 0;
+
+    void append(const std::string& t, int style) {
+        if (t.empty()) return;
+        if (!cur.empty() && cur.back().style == style)
+            cur.back().text += t;
+        else
+            cur.push_back({t, style});
+    }
+    void emit_pending() {
+        if (pending > 0 && col > 0) {
+            append(std::string(static_cast<size_t>(pending), ' '), NONE);
+            col += pending;
+        }
+        pending = 0;
+    }
+    void newline() {
+        out.push_back(cur);
+        cur.clear();
+        col = 0;
+        pending = 0;
+    }
+    void finish() {
+        out.push_back(cur);
+        cur.clear();
+        col = 0;
+        pending = 0;
+    }
+};
+
+void put_word(WrapState& s, const std::string& w, int style) {
+    size_t len = utf8_len(w);
+    if (s.col > 0 && s.col + s.pending + static_cast<int>(len) > s.width) {
+        s.newline();
+        s.pending = 0;
+    }
+    s.emit_pending();
+    if (s.col + static_cast<int>(len) <= s.width) {
+        s.append(w, style);
+        s.col += static_cast<int>(len);
+        return;
+    }
+    size_t i = 0;
+    while (i < w.size()) {
+        if (s.col >= s.width) s.newline();
+        size_t l = utf8_char_len(static_cast<unsigned char>(w[i]));
+        if (i + l > w.size()) l = 1;
+        s.append(w.substr(i, l), style);
+        ++s.col;
+        i += l;
+    }
+}
+
+void put_text(WrapState& s, const std::string& t, int style) {
+    size_t i = 0, n = t.size();
+    while (i < n) {
+        if (t[i] == ' ') {
+            size_t j = i;
+            while (j < n && t[j] == ' ') ++j;
+            s.pending += static_cast<int>(j - i);
+            i = j;
+            continue;
+        }
+        size_t j = i;
+        while (j < n && t[j] != ' ') ++j;
+        put_word(s, t.substr(i, j - i), style);
+        i = j;
+    }
+}
+
+void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
+    for (const auto& x : in) {
+        switch (x.kind) {
+            case Inline::Text: put_text(s, x.text, style); break;
+            case Inline::Emph: render_inlines(x.children, s, style | ITALIC); break;
+            case Inline::Strong: render_inlines(x.children, s, style | BOLD); break;
+            case Inline::Strike: render_inlines(x.children, s, style | STRIKE); break;
+            case Inline::Code: put_text(s, x.text, style | CODE); break;
+            case Inline::Link:
+                put_text(s, x.text, style | LINK);
+                if (!x.url.empty() && x.url != x.text) {
+                    s.pending += 1;
+                    put_text(s, "(" + x.url + ")", style | MARKER);
+                }
+                break;
+            case Inline::Break: s.newline(); break;
+        }
+    }
+}
+
+const std::vector<std::string>& keywords(const std::string& lang) {
+    static const std::vector<std::string> py = {
+        "def", "class", "return", "if", "elif", "else", "for", "while", "import", "from",
+        "as", "try", "except", "finally", "with", "lambda", "yield", "None", "True", "False",
+        "and", "or", "not", "in", "is", "pass", "break", "continue", "global", "nonlocal",
+        "raise", "assert", "async", "await", "del", "print"};
+    static const std::vector<std::string> sh = {
+        "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
+        "esac", "function", "in", "select", "time", "echo", "export", "local", "readonly",
+        "return", "exit", "set", "unset", "read", "cd", "source", "shift", "trap"};
+    static const std::vector<std::string> none;
+    if (lang == "python" || lang == "py" || lang == "python3") return py;
+    if (lang == "bash" || lang == "sh" || lang == "shell" || lang == "zsh") return sh;
+    return none;
+}
+
+bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
+
+Line highlight(const std::string& line, const std::string& lang) {
+    Line out;
+    const std::vector<std::string>& kw = keywords(lang);
+    if (kw.empty()) {
+        out.push_back({line, CODE_BLOCK});
+        return out;
+    }
+    size_t i = 0, n = line.size();
+    while (i < n) {
+        char c = line[i];
+        if (c == '#') {
+            out.push_back({line.substr(i), CODE_BLOCK | SYN_COMMENT});
+            break;
+        }
+        if (c == '"' || c == '\'') {
+            char q = c;
+            size_t j = i + 1;
+            while (j < n && line[j] != q) {
+                if (line[j] == '\\' && j + 1 < n) ++j;
+                ++j;
+            }
+            if (j < n) ++j;
+            out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_STRING});
+            i = j;
+            continue;
+        }
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            size_t j = i;
+            while (j < n && (std::isdigit(static_cast<unsigned char>(line[j])) || line[j] == '.')) ++j;
+            out.push_back({line.substr(i, j - i), CODE_BLOCK | SYN_NUMBER});
+            i = j;
+            continue;
+        }
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            size_t j = i;
+            while (j < n && ident_char(line[j])) ++j;
+            std::string w = line.substr(i, j - i);
+            int style = CODE_BLOCK;
+            if (std::find(kw.begin(), kw.end(), w) != kw.end())
+                style |= SYN_KEYWORD;
+            else if (j < n && line[j] == '(')
+                style |= SYN_FUNCTION;
+            out.push_back({w, style});
+            i = j;
+            continue;
+        }
+        out.push_back({std::string(1, c), CODE_BLOCK});
+        ++i;
+    }
+    return out;
+}
+
+void render_block(const Block& b, int width, Lines& out);
+
+void render_blocks(const std::vector<Block>& blocks, int width, Lines& out) {
+    for (size_t k = 0; k < blocks.size(); ++k) {
+        if (k > 0) out.push_back(Line{});
+        render_block(blocks[k], width, out);
+    }
+}
+
+void render_table(const Block& b, int width, Lines& out) {
+    if (b.rows.empty()) return;
+    size_t ncol = 0;
+    for (const auto& r : b.rows) ncol = std::max(ncol, r.cells.size());
+    if (ncol == 0) return;
+
+    std::vector<std::vector<Line>> rendered(b.rows.size());
+    std::vector<size_t> cw(ncol, 0);
+    for (size_t ri = 0; ri < b.rows.size(); ++ri) {
+        rendered[ri].resize(ncol);
+        for (size_t ci = 0; ci < ncol; ++ci) {
+            WrapState s;
+            s.width = 1000000;
+            if (ci < b.rows[ri].cells.size()) render_inlines(b.rows[ri].cells[ci].inlines, s, NONE);
+            s.finish();
+            Line l = s.out.empty() ? Line{} : std::move(s.out[0]);
+            size_t w = 0;
+            for (auto& sp : l) w += utf8_len(sp.text);
+            cw[ci] = std::max(cw[ci], w);
+            rendered[ri][ci] = std::move(l);
+        }
+    }
+
+    auto total = [&]() {
+        size_t t = 1;
+        for (auto w : cw) t += w + 3;
+        return t;
+    };
+    while (total() > static_cast<size_t>(width)) {
+        size_t wi = 0;
+        for (size_t k = 1; k < ncol; ++k)
+            if (cw[k] > cw[wi]) wi = k;
+        if (cw[wi] <= 3) break;
+        cw[wi]--;
+    }
+
+    auto border = [&]() {
+        std::string s = "+";
+        for (size_t k = 0; k < ncol; ++k) s += std::string(cw[k] + 2, '-') + "+";
+        return Line{{s, MARKER}};
+    };
+
+    out.push_back(border());
+    for (size_t ri = 0; ri < b.rows.size(); ++ri) {
+        Line row;
+        row.push_back({"|", MARKER});
+        for (size_t ci = 0; ci < ncol; ++ci) {
+            int align = (ci < b.rows[ri].cells.size()) ? b.rows[ri].cells[ci].align : 0;
+            Line& cell = rendered[ri][ci];
+            size_t w = 0;
+            for (auto& sp : cell) w += utf8_len(sp.text);
+            size_t pad = cw[ci] > w ? cw[ci] - w : 0;
+            size_t lp = 0, rp = 0;
+            if (align == 2)
+                lp = pad;
+            else if (align == 1) {
+                lp = pad / 2;
+                rp = pad - lp;
+            } else {
+                rp = pad;
+            }
+            row.push_back({" ", NONE});
+            if (lp) row.push_back({std::string(lp, ' '), NONE});
+            size_t used = 0;
+            for (auto& sp : cell) {
+                if (used >= cw[ci]) break;
+                std::string t = sp.text;
+                size_t tl = utf8_len(t);
+                if (used + tl > cw[ci]) {
+                    t = utf8_prefix(t, cw[ci] - used);
+                    tl = utf8_len(t);
+                }
+                row.push_back({t, sp.style});
+                used += tl;
+            }
+            if (rp) row.push_back({std::string(rp, ' '), NONE});
+            row.push_back({" ", NONE});
+            row.push_back({"|", MARKER});
+        }
+        out.push_back(std::move(row));
+        if (ri == 0) out.push_back(border());
+    }
+}
+
+void render_block(const Block& b, int width, Lines& out) {
+    switch (b.kind) {
+        case Block::Paragraph: {
+            WrapState s;
+            s.width = width;
+            render_inlines(b.inlines, s, NONE);
+            s.finish();
+            for (auto& l : s.out) out.push_back(std::move(l));
+            break;
+        }
+        case Block::Heading: {
+            WrapState s;
+            s.width = width;
+            render_inlines(b.inlines, s, BOLD | HEADING);
+            s.finish();
+            for (auto& l : s.out) out.push_back(std::move(l));
+            break;
+        }
+        case Block::Code: {
+            auto raw = split_lines(b.text);
+            for (auto& rl : raw) {
+                if (rl.empty()) {
+                    out.push_back(Line{{"", CODE_BLOCK}});
+                    continue;
+                }
+                size_t pos = 0;
+                while (pos < rl.size()) {
+                    std::string chunk;
+                    size_t cnt = 0;
+                    while (pos < rl.size() && cnt < static_cast<size_t>(width)) {
+                        size_t l = utf8_char_len(static_cast<unsigned char>(rl[pos]));
+                        if (pos + l > rl.size()) l = 1;
+                        chunk += rl.substr(pos, l);
+                        pos += l;
+                        ++cnt;
+                    }
+                    Line hl = highlight(chunk, b.lang);
+                    size_t used = utf8_len(chunk);
+                    if (used < static_cast<size_t>(width))
+                        hl.push_back({std::string(static_cast<size_t>(width) - used, ' '), CODE_BLOCK});
+                    out.push_back(std::move(hl));
+                }
+            }
+            break;
+        }
+        case Block::Quote: {
+            Lines inner;
+            render_blocks(b.children, std::max(1, width - 2), inner);
+            for (auto& l : inner) {
+                if (l.empty()) {
+                    out.push_back(Line{});
+                    continue;
+                }
+                Line nl;
+                nl.push_back({"│ ", QUOTE});
+                for (auto& sp : l) nl.push_back(std::move(sp));
+                out.push_back(std::move(nl));
+            }
+            break;
+        }
+        case Block::BulletList:
+        case Block::OrderedList: {
+            int num = (b.kind == Block::OrderedList) ? (b.level > 0 ? b.level : 1) : 0;
+            for (auto& item : b.items) {
+                Lines inner;
+                render_blocks(item.blocks, std::max(1, width - 2), inner);
+                std::string marker = (b.kind == Block::BulletList) ? "- " : (std::to_string(num++) + ". ");
+                size_t mlen = utf8_len(marker);
+                bool first = true;
+                for (auto& l : inner) {
+                    if (l.empty()) {
+                        out.push_back(Line{});
+                        continue;
+                    }
+                    Line nl;
+                    if (first) {
+                        nl.push_back({marker, MARKER});
+                        first = false;
+                    } else {
+                        nl.push_back({std::string(mlen, ' '), NONE});
+                    }
+                    for (auto& sp : l) nl.push_back(std::move(sp));
+                    out.push_back(std::move(nl));
+                }
+            }
+            break;
+        }
+        case Block::Rule: {
+            std::string r;
+            for (int k = 0; k < width; ++k) r += "─";
+            out.push_back(Line{{r, MARKER}});
+            break;
+        }
+        case Block::Table:
+            render_table(b, width, out);
+            break;
+    }
+}
+
+}  // namespace
+
+std::vector<Block> parse(const std::string& src) { return parse_blocks(src); }
+
+Lines render(const std::vector<Block>& blocks, int width) {
+    if (width < 8) width = 8;
+    Lines out;
+    render_blocks(blocks, width, out);
+    return out;
+}
+
+Lines render(const std::string& src, int width) { return render(parse(src), width); }
+
+}  // namespace md

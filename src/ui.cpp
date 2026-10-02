@@ -1,4 +1,5 @@
 #include "ui.hpp"
+#include "markdown.hpp"
 #include "util.hpp"
 #include <algorithm>
 #include <cstring>
@@ -20,6 +21,8 @@ std::string sgr(int style) {
     if (style & STYLE_BLUE) s += "\033[34m";
     if (style & STYLE_MAGENTA) s += "\033[35m";
     if (style & STYLE_CYAN) s += "\033[36m";
+    if (style & STYLE_UNDERLINE) s += "\033[4m";
+    if (style & STYLE_REVERSE) s += "\033[7m";
     return s;
 }
 
@@ -99,6 +102,58 @@ void push_status_chars(std::vector<StatusChar>& out, const std::string& s, int s
     }
 }
 
+std::string sanitize_text(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    size_t col = 0;
+    size_t i = 0;
+    while (i < in.size()) {
+        unsigned char c = static_cast<unsigned char>(in[i]);
+        if (c == '\n') {
+            out.push_back('\n');
+            col = 0;
+            ++i;
+            continue;
+        }
+        if (c == '\t') {
+            size_t pad = 4 - (col % 4);
+            out.append(pad, ' ');
+            col += pad;
+            ++i;
+            continue;
+        }
+        if (c < 0x20 || c == 0x7F) {
+            ++i;
+            continue;
+        }
+        size_t len = utf8_seq_len(c);
+        if (i + len > in.size()) len = 1;
+        out.append(in, i, len);
+        col += 1;
+        i += len;
+    }
+    return out;
+}
+
+int map_md_style(int st) {
+    int r = STYLE_NORMAL;
+    if (st & md::BOLD) r |= STYLE_BOLD;
+    if (st & md::ITALIC) r |= STYLE_YELLOW;
+    if (st & md::STRIKE) r |= STYLE_DIM;
+    if (st & md::CODE) r |= STYLE_REVERSE;
+    if (st & md::CODE_BLOCK) r |= STYLE_REVERSE;
+    if (st & md::HEADING) r |= STYLE_BOLD | STYLE_CYAN;
+    if (st & md::LINK) r |= STYLE_UNDERLINE | STYLE_BLUE;
+    if (st & md::QUOTE) r |= STYLE_DIM;
+    if (st & md::MARKER) r |= STYLE_DIM;
+    if (st & md::SYN_KEYWORD) r |= STYLE_BOLD | STYLE_BLUE;
+    if (st & md::SYN_STRING) r |= STYLE_GREEN;
+    if (st & md::SYN_COMMENT) r |= STYLE_DIM;
+    if (st & md::SYN_NUMBER) r |= STYLE_MAGENTA;
+    if (st & md::SYN_FUNCTION) r |= STYLE_CYAN;
+    return r;
+}
+
 }  // namespace
 
 UI::UI(Terminal& term) : term_(term) {}
@@ -115,62 +170,133 @@ int UI::viewport_rows() const {
     return std::max(1, term_.rows() - 3);
 }
 
-void UI::wrap_and_push(const std::string& text, int style) {
-    auto wrapped = wrap(text, std::max(10, term_.cols()));
-    for (auto& w : wrapped) {
-        lines_.push_back({w, style});
-    }
+void UI::push_lines(std::vector<DisplayLine> lines) {
+    for (auto& l : lines) lines_.push_back(std::move(l));
     while (lines_.size() > kMaxLines) {
         lines_.pop_front();
         if (stream_base_ > 0) --stream_base_;  // indices shift with the pop
     }
 }
 
-std::vector<std::string> UI::wrap(const std::string& text, int width) const {
-    std::vector<std::string> out;
-    if (text.empty()) {
-        out.push_back("");
-        return out;
-    }
-    size_t i = 0;
-    while (i < text.size()) {
-        // Build one line, counting display columns. Control characters must
-        // never reach the terminal raw: a tab would expand past the wrapped
-        // width and cut the line on the right, and a stray ESC/CR would move
-        // the cursor mid-line and visibly truncate it.
-        std::string line;
-        size_t cols = 0;
-        while (i < text.size()) {
-            unsigned char c = static_cast<unsigned char>(text[i]);
+void UI::wrap_and_push(const std::string& text, int style) {
+    push_lines(wrap_spans({{text, style}}, std::max(10, term_.cols())));
+}
+
+std::vector<DisplayLine> UI::wrap_spans(const std::vector<Span>& spans, int width) const {
+    std::vector<DisplayLine> out;
+    if (width < 1) width = 1;
+
+    struct Token {
+        std::string text;
+        int style;
+        bool nl = false;
+    };
+    std::vector<Token> tokens;
+    size_t tcol = 0;
+    for (const auto& sp : spans) {
+        size_t i = 0;
+        while (i < sp.text.size()) {
+            unsigned char c = static_cast<unsigned char>(sp.text[i]);
             if (c == '\n') {
+                tokens.push_back({"", sp.style, true});
+                tcol = 0;
                 ++i;
-                break;
+                continue;
             }
             if (c == '\t') {
-                size_t pad = 4 - (cols % 4);  // expand to the next tab stop
-                if (cols + pad > static_cast<size_t>(width)) break;
-                line.append(pad, ' ');
-                cols += pad;
+                size_t pad = 4 - (tcol % 4);  // expand to the next tab stop
+                tokens.push_back({std::string(pad, ' '), sp.style, false});
+                tcol += pad;
                 ++i;
                 continue;
             }
-            if (c < 0x20 || c == 0x7F) {  // other controls: never shown
+            if (c == ' ') {
+                size_t j = i;
+                while (j < sp.text.size() && sp.text[j] == ' ') ++j;
+                tokens.push_back({std::string(j - i, ' '), sp.style, false});
+                tcol += j - i;
+                i = j;
+                continue;
+            }
+            if (c < 0x20 || c == 0x7F) {  // controls never reach the terminal
                 ++i;
                 continue;
             }
-            size_t len = 1;
-            if ((c & 0xE0) == 0xC0) len = 2;
-            else if ((c & 0xF0) == 0xE0) len = 3;
-            else if ((c & 0xF8) == 0xF0) len = 4;
-            if (i + len > text.size()) len = 1;
-            if (cols >= static_cast<size_t>(width)) break;
-            line.append(text, i, len);
-            cols += 1;
+            size_t len = utf8_seq_len(c);
+            if (i + len > sp.text.size()) len = 1;
+            tokens.push_back({sp.text.substr(i, len), sp.style, false});
+            ++tcol;
             i += len;
         }
-        out.push_back(std::move(line));
     }
-    if (out.empty()) out.push_back("");
+
+    DisplayLine cur;
+    int col = 0;
+    int pending = 0;
+    auto append = [&](const std::string& t, int style) {
+        if (t.empty()) return;
+        if (!cur.spans.empty() && cur.spans.back().style == style)
+            cur.spans.back().text += t;
+        else
+            cur.spans.push_back({t, style});
+    };
+    auto newline = [&]() {
+        out.push_back(std::move(cur));
+        cur = DisplayLine{};
+        col = 0;
+        pending = 0;
+    };
+    auto emit_pending = [&]() {
+        if (pending > 0 && col > 0) {
+            append(std::string(static_cast<size_t>(pending), ' '), STYLE_NORMAL);
+            col += pending;
+        }
+        pending = 0;
+    };
+
+    for (auto& t : tokens) {
+        if (t.nl) {
+            newline();
+            continue;
+        }
+        if (t.text.find_first_not_of(' ') == std::string::npos) {
+            pending += static_cast<int>(utf8_len(t.text));
+            continue;
+        }
+        int len = static_cast<int>(utf8_len(t.text));
+        if (col > 0 && col + pending + len > width) {
+            newline();
+            pending = 0;
+        }
+        emit_pending();
+        if (col + len <= width) {
+            append(t.text, t.style);
+            col += len;
+            continue;
+        }
+        size_t k = 0;
+        while (k < t.text.size()) {
+            if (col >= width) newline();
+            size_t l = utf8_seq_len(static_cast<unsigned char>(t.text[k]));
+            if (k + l > t.text.size()) l = 1;
+            append(t.text.substr(k, l), t.style);
+            ++col;
+            k += l;
+        }
+    }
+    out.push_back(std::move(cur));
+    return out;
+}
+
+std::vector<DisplayLine> UI::render_markdown(const std::string& text, int width) const {
+    auto lines = md::render(sanitize_text(text), std::max(10, width));
+    std::vector<DisplayLine> out;
+    out.reserve(lines.size());
+    for (auto& l : lines) {
+        DisplayLine dl;
+        for (auto& sp : l) dl.spans.push_back({sp.text, map_md_style(sp.style)});
+        out.push_back(std::move(dl));
+    }
     return out;
 }
 
@@ -188,6 +314,10 @@ void UI::append(const std::string& text, int style) {
     }
 }
 
+void UI::append_markdown(const std::string& text) {
+    push_lines(render_markdown(text, term_.cols()));
+}
+
 void UI::append_raw(const std::string& text) {
     append(text, 0);
 }
@@ -196,7 +326,7 @@ void UI::begin_stream(int style) {
     streaming_ = true;
     stream_style_ = style;
     stream_acc_.clear();
-    lines_.push_back({"", style});
+    lines_.push_back(DisplayLine{});
     // The stream block owns everything from this line on; stream_token()
     // pops back to here before re-wrapping the accumulated text.
     stream_base_ = lines_.size() - 1;
@@ -207,13 +337,21 @@ void UI::stream_token(const std::string& tok) {
         begin_stream();
     }
     stream_acc_ += tok;
-    auto wrapped = wrap(stream_acc_, std::max(10, term_.cols()));
+    auto wrapped = wrap_spans({{sanitize_text(stream_acc_), stream_style_}},
+                              std::max(10, term_.cols()));
     while (lines_.size() > stream_base_) lines_.pop_back();
-    for (auto& w : wrapped) lines_.push_back({w, stream_style_});
-    if (lines_.empty()) lines_.push_back({"", stream_style_});
+    for (auto& dl : wrapped) lines_.push_back(std::move(dl));
+    if (lines_.empty()) lines_.push_back(DisplayLine{});
 }
 
 void UI::end_stream() {
+    // Markdown is rendered once the message is complete: parsing a partial
+    // fence or a half-typed emphasis char would make the block jump around.
+    if (markdown_ && stream_style_ != STYLE_DIM && !stream_acc_.empty()) {
+        auto rendered = render_markdown(stream_acc_, term_.cols());
+        while (lines_.size() > stream_base_) lines_.pop_back();
+        for (auto& dl : rendered) lines_.push_back(std::move(dl));
+    }
     streaming_ = false;
     stream_acc_.clear();
 }
@@ -450,11 +588,15 @@ void UI::draw_viewport() {
         int idx = start + i;
         if (idx >= 0 && idx < total) {
             const auto& dl = lines_[static_cast<size_t>(idx)];
-            // Character-based cut: wrap() already limits lines to cols
-            // characters, so this is a no-op unless the window shrank. A
-            // byte-based cut here would chop characters that actually fit.
-            std::string t = utf8_prefix(dl.text, static_cast<size_t>(term_.cols()));
-            write_styled(term_, dl.style, t);  // escapes are added after truncation
+            // Cut by character (UTF-8 codepoints); lines are wrapped to the
+            // current width, so this only trims after a shrink.
+            int avail = term_.cols();
+            for (const auto& sp : dl.spans) {
+                if (avail <= 0) break;
+                std::string t = utf8_prefix(sp.text, static_cast<size_t>(avail));
+                write_styled(term_, sp.style, t);
+                avail -= static_cast<int>(utf8_len(t));
+            }
         }
     }
 
@@ -529,8 +671,8 @@ void UI::dump_screen() {
         const auto& dl = lines_[static_cast<size_t>(idx)];
         // Re-wrap to the current width: lines were wrapped when appended and
         // the window may have shrunk since (on_resize does not re-wrap).
-        for (const auto& w : wrap(dl.text, width)) {
-            write_styled(term_, dl.style, w);
+        for (auto& wl : wrap_spans(dl.spans, width)) {
+            for (const auto& sp : wl.spans) write_styled(term_, sp.style, sp.text);
             term_.write("\r\n");
         }
     }

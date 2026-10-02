@@ -59,6 +59,7 @@ nlohmann::json Config::to_json() const {
         {"model", model},
         {"auto_approve_tools", auto_approve_tools},
         {"allow_path_escape", allow_path_escape},
+        {"markdown", markdown},
         {"max_file_bytes", max_file_bytes},
         {"max_tool_output_bytes", max_tool_output_bytes},
         {"max_history_messages", max_history_messages},
@@ -84,6 +85,8 @@ void Config::from_json(const nlohmann::json& j) {
         auto_approve_tools = j["auto_approve_tools"].get<bool>();
     if (j.contains("allow_path_escape") && j["allow_path_escape"].is_boolean())
         allow_path_escape = j["allow_path_escape"].get<bool>();
+    if (j.contains("markdown") && j["markdown"].is_boolean())
+        markdown = j["markdown"].get<bool>();
     if (j.contains("max_file_bytes"))
         max_file_bytes = usize(j["max_file_bytes"], max_file_bytes);
     if (j.contains("max_tool_output_bytes"))

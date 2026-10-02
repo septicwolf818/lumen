@@ -9,6 +9,7 @@ struct Config {
     std::string model = "";
     bool auto_approve_tools = false;
     bool allow_path_escape = false;
+    bool markdown = false;
     size_t max_file_bytes = 262144;
     size_t max_tool_output_bytes = 65536;
     size_t max_history_messages = 200;
