@@ -5,8 +5,9 @@
 
 namespace {
 
-// SGR sequences for UiStyle. Only bold/dim and the 8 basic colours, which the
-// Linux console renders; keeps every line compatible with TERM=linux.
+// SGR sequences for UiStyle. Only bold/dim and basic colours 31-36 (black and
+// white are never used), which the Linux console renders; keeps every line
+// compatible with TERM=linux.
 // Returns an empty string under NO_COLOR, so write_styled emits plain text.
 std::string sgr(int style) {
     if (util::no_color()) return "";

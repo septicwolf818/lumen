@@ -14,9 +14,10 @@
 //   row H: input line
 
 // Line styles for scrollback: a bitmask so a line can carry bold/dim plus one
-// colour. Deliberately limited to the SGR attributes the Linux console
-// (TERM=linux) implements - bold, dim and the 8 basic foreground colours -
-// so no 256-colour (38;5;n) or truecolor (38;2;r;g;b) sequences are emitted.
+// colour. Deliberately limited to the SGR attributes we emit - bold, dim and
+// the basic foreground colours 31-36 (black and white are never needed) -
+// all rendered by the Linux console (TERM=linux), so no 256-colour (38;5;n)
+// or truecolor (38;2;r;g;b) sequences are emitted.
 // STYLE_DIM == 1, so append(text, 1) callers keep their old meaning.
 enum UiStyle : int {
     STYLE_NORMAL  = 0,
