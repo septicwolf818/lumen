@@ -35,12 +35,41 @@ void write_styled(Terminal& t, int style, const std::string& text) {
     t.reset_attrs();
 }
 
-// Cut to at most n bytes without splitting a UTF-8 sequence.
+// Cut to at most n characters (UTF-8 codepoints) without splitting a
+// sequence. Truncation must count characters, not bytes: wrap() limits
+// lines to n display columns, and a line of n characters can easily be
+// more than n bytes - cutting at byte n would drop characters that fit.
 std::string utf8_prefix(const std::string& s, size_t n) {
-    if (s.size() <= n) return s;
-    size_t cut = n;
-    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
-    return s.substr(0, cut);
+    size_t i = 0;
+    size_t count = 0;
+    while (i < s.size() && count < n) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t len = 1;
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        if (i + len > s.size()) len = 1;
+        i += len;
+        ++count;
+    }
+    return s.substr(0, i);
+}
+
+// Number of characters (UTF-8 codepoints) in s.
+size_t utf8_len(const std::string& s) {
+    size_t i = 0;
+    size_t count = 0;
+    while (i < s.size()) {
+        unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t len = 1;
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        if (i + len > s.size()) len = 1;
+        i += len;
+        ++count;
+    }
+    return count;
 }
 
 // Scrollback cap.
@@ -80,23 +109,41 @@ std::vector<std::string> UI::wrap(const std::string& text, int width) const {
     }
     size_t i = 0;
     while (i < text.size()) {
-        // take up to width columns (approx = bytes for ASCII)
-        size_t take = 0;
+        // Build one line, counting display columns. Control characters must
+        // never reach the terminal raw: a tab would expand past the wrapped
+        // width and cut the line on the right, and a stray ESC/CR would move
+        // the cursor mid-line and visibly truncate it.
+        std::string line;
         size_t cols = 0;
-        while (i + take < text.size() && cols < static_cast<size_t>(width)) {
-            unsigned char c = static_cast<unsigned char>(text[i + take]);
-            if (c == '\n') break;
-            size_t clen = 1;
-            if ((c & 0xE0) == 0xC0) clen = 2;
-            else if ((c & 0xF0) == 0xE0) clen = 3;
-            else if ((c & 0xF8) == 0xF0) clen = 4;
-            if (i + take + clen > text.size()) clen = 1;
-            take += clen;
-            cols += 1;  // treat as 1 column
+        while (i < text.size()) {
+            unsigned char c = static_cast<unsigned char>(text[i]);
+            if (c == '\n') {
+                ++i;
+                break;
+            }
+            if (c == '\t') {
+                size_t pad = 4 - (cols % 4);  // expand to the next tab stop
+                if (cols + pad > static_cast<size_t>(width)) break;
+                line.append(pad, ' ');
+                cols += pad;
+                ++i;
+                continue;
+            }
+            if (c < 0x20 || c == 0x7F) {  // other controls: never shown
+                ++i;
+                continue;
+            }
+            size_t len = 1;
+            if ((c & 0xE0) == 0xC0) len = 2;
+            else if ((c & 0xF0) == 0xE0) len = 3;
+            else if ((c & 0xF8) == 0xF0) len = 4;
+            if (i + len > text.size()) len = 1;
+            if (cols >= static_cast<size_t>(width)) break;
+            line.append(text, i, len);
+            cols += 1;
+            i += len;
         }
-        out.push_back(text.substr(i, take));
-        i += take;
-        if (i < text.size() && text[i] == '\n') ++i;
+        out.push_back(std::move(line));
     }
     if (out.empty()) out.push_back("");
     return out;
@@ -305,10 +352,11 @@ void UI::draw_status() {
     int avail = term_.cols();
     for (auto& p : parts) {
         if (avail <= 0) break;
-        if (static_cast<int>(p.text.size()) > avail)
-            p.text = utf8_prefix(p.text, static_cast<size_t>(avail));
+        // Truncate by characters (utf8_prefix) and count the written part in
+        // characters too - byte sizes would cut multi-byte values early.
+        p.text = utf8_prefix(p.text, static_cast<size_t>(avail));
         write_styled(term_, p.style, p.text);
-        avail -= static_cast<int>(p.text.size());
+        avail -= static_cast<int>(utf8_len(p.text));
     }
 }
 
@@ -324,9 +372,10 @@ void UI::draw_viewport() {
         int idx = start + i;
         if (idx >= 0 && idx < total) {
             const auto& dl = lines_[static_cast<size_t>(idx)];
-            std::string t = dl.text;
-            if (t.size() > static_cast<size_t>(term_.cols()))
-                t = utf8_prefix(t, static_cast<size_t>(term_.cols()));
+            // Character-based cut: wrap() already limits lines to cols
+            // characters, so this is a no-op unless the window shrank. A
+            // byte-based cut here would chop characters that actually fit.
+            std::string t = utf8_prefix(dl.text, static_cast<size_t>(term_.cols()));
             write_styled(term_, dl.style, t);  // escapes are added after truncation
         }
     }
@@ -348,7 +397,7 @@ void UI::draw_viewport() {
         ind += "[queued: " + std::to_string(queue_count_) + "]";
     }
     if (ind.empty()) ind = "---";
-    if (static_cast<int>(ind.size()) > term_.cols()) ind = ind.substr(0, term_.cols());
+    ind = utf8_prefix(ind, static_cast<size_t>(term_.cols()));
     write_styled(term_, STYLE_DIM, ind);
 }
 
