@@ -134,7 +134,7 @@ std::string sanitize_text(const std::string& in) {
     return out;
 }
 
-int map_md_style(int st) {
+int map_md_style(int st, bool dim = false) {
     int r = STYLE_NORMAL;
     if (st & md::BOLD) r |= STYLE_BOLD;
     if (st & md::ITALIC) r |= STYLE_YELLOW;
@@ -162,6 +162,13 @@ int map_md_style(int st) {
     if (st & md::SYN_OPERATOR) r |= STYLE_NORMAL;  // punctuation: uncoloured
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
+
+    // Dim mode (thinking blocks): keep the foreground colours so the syntax is
+    // still readable, but drop bold/underline/reverse and force dim.
+    if (dim) {
+        r &= ~(STYLE_BOLD | STYLE_UNDERLINE | STYLE_REVERSE);
+        r |= STYLE_DIM;
+    }
     return r;
 }
 
@@ -299,13 +306,13 @@ std::vector<DisplayLine> UI::wrap_spans(const std::vector<Span>& spans, int widt
     return out;
 }
 
-std::vector<DisplayLine> UI::render_markdown(const std::string& text, int width) const {
+std::vector<DisplayLine> UI::render_markdown(const std::string& text, int width, bool dim) const {
     auto lines = md::render(sanitize_text(text), std::max(10, width));
     std::vector<DisplayLine> out;
     out.reserve(lines.size());
     for (auto& l : lines) {
         DisplayLine dl;
-        for (auto& sp : l) dl.spans.push_back({sp.text, map_md_style(sp.style)});
+        for (auto& sp : l) dl.spans.push_back({sp.text, map_md_style(sp.style, dim)});
         out.push_back(std::move(dl));
     }
     return out;
@@ -328,6 +335,13 @@ void UI::append_markdown(const std::string& text) {
     push_lines(render_markdown(text, term_.cols()));
 }
 
+void UI::append_thinking(const std::string& text) {
+    if (markdown_)
+        push_lines(render_markdown(text, term_.cols(), /*dim=*/true));
+    else
+        append(text, STYLE_DIM);
+}
+
 void UI::begin_stream(int style) {
     streaming_ = true;
     stream_style_ = style;
@@ -346,9 +360,11 @@ void UI::stream_token(const std::string& tok) {
     // Render Markdown live so code fences are highlighted as they stream. The
     // parser is safe on partial input: an unclosed fence renders as a code
     // block and half-typed emphasis stays literal, so nothing jumps around.
+    // Thinking blocks (STYLE_DIM) render the same way, forced dim.
     std::vector<DisplayLine> wrapped;
-    if (markdown_ && stream_style_ != STYLE_DIM)
-        wrapped = render_markdown(stream_acc_, std::max(10, term_.cols()));
+    if (markdown_)
+        wrapped = render_markdown(stream_acc_, std::max(10, term_.cols()),
+                                  stream_style_ == STYLE_DIM);
     else
         wrapped = wrap_spans({{sanitize_text(stream_acc_), stream_style_}},
                              std::max(10, term_.cols()));
@@ -359,8 +375,9 @@ void UI::stream_token(const std::string& tok) {
 
 void UI::end_stream() {
     // Final render once the message is complete (closes any open fences cleanly).
-    if (markdown_ && stream_style_ != STYLE_DIM && !stream_acc_.empty()) {
-        auto rendered = render_markdown(stream_acc_, term_.cols());
+    if (markdown_ && !stream_acc_.empty()) {
+        auto rendered = render_markdown(stream_acc_, term_.cols(),
+                                        stream_style_ == STYLE_DIM);
         while (lines_.size() > stream_base_) lines_.pop_back();
         for (auto& dl : rendered) lines_.push_back(std::move(dl));
     }

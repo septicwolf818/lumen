@@ -422,7 +422,7 @@ void Agent::replay_message(const Message& m) {
         bool has_tools = m.tool_calls.is_array() && !m.tool_calls.empty();
         if (!m.thinking.empty()) {
             // Thinking models: reasoning rendered dim, exactly as it streamed.
-            ui_.append(m.thinking, STYLE_DIM);
+            ui_.append_thinking(m.thinking);
             if (has_content || has_tools) ui_.append("");
         }
         if (has_content) {

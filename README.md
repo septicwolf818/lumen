@@ -192,9 +192,10 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
 - links rendered as `text (url)`
 
 Blocks are rendered as they stream: a fenced code block is highlighted from the
-moment it opens, and the layout never jumps when the fence later closes.
-Rendering uses only attributes the Linux console supports — no italics and no
-clickable hyperlinks.
+moment it opens, and the layout never jumps when the fence later closes. Model
+reasoning ("thinking") is rendered the same way but forced dim — colours are
+kept, bold/underline are dropped. Rendering uses only attributes the Linux
+console supports — no italics and no clickable hyperlinks.
 
 Output uses only bold, dim, underline, reverse and the 8 basic colours. Set
 `NO_COLOR` (non-empty) to disable all styling:

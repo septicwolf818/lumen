@@ -61,6 +61,8 @@ public:
     // Render assistant/user text as Markdown when the feature is enabled.
     void set_markdown(bool on) { markdown_ = on; }
     void append_markdown(const std::string& text);
+    // Reasoning text: Markdown-rendered but forced dim when enabled.
+    void append_thinking(const std::string& text);
 
     // Streaming: append tokens to the last "open" assistant line.
     // style applies to the whole streamed block (STYLE_DIM for thinking).
@@ -146,7 +148,7 @@ private:
 
     void wrap_and_push(const std::string& text, int style);
     std::vector<DisplayLine> wrap_spans(const std::vector<Span>& spans, int width) const;
-    std::vector<DisplayLine> render_markdown(const std::string& text, int width) const;
+    std::vector<DisplayLine> render_markdown(const std::string& text, int width, bool dim = false) const;
     void push_lines(std::vector<DisplayLine> lines);
     void viewport_window(int& start, int& rows) const;
     std::vector<std::pair<std::string, int>> status_parts() const;
