@@ -1,4 +1,5 @@
 #include "terminal.hpp"
+#include "util.hpp"
 #include <unistd.h>
 #include <csignal>
 #include <cstring>
@@ -72,8 +73,10 @@ void Terminal::restore() {
         has_orig_ = false;
     }
     if (raw_) {
-        // restore cursor and attrs
-        const char* seq = "\033[0m\033[?25h\033[r";
+        // restore cursor and attrs (no attr reset under NO_COLOR: nothing
+        // styling-related was written in the first place)
+        const char* seq = util::no_color() ? "\033[?25h\033[r"
+                                           : "\033[0m\033[?25h\033[r";
         ::write(STDOUT_FILENO, seq, std::strlen(seq));
         raw_ = false;
     }
@@ -148,6 +151,7 @@ void Terminal::reset_scroll_region() {
 }
 
 void Terminal::set_fg(int color) {
+    if (util::no_color()) return;  // NO_COLOR: emit no styling at all
     // color 0-7 -> 30-37
     if (color >= 0 && color <= 7) {
         char buf[16];

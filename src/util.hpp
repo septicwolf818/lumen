@@ -37,6 +37,10 @@ std::string fmt_tokens(size_t n);
 // Simple shell-escape for display
 std::string shell_escape(const std::string& s);
 
+// https://no-color.org - true when NO_COLOR is present and non-empty, meaning
+// output must be emitted without any ANSI colour/attribute sequences.
+bool no_color();
+
 uint64_t steady_ms();
 
 // UTF-8 / binary safety (nlohmann::json requires valid UTF-8 strings)

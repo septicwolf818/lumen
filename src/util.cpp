@@ -140,6 +140,15 @@ std::string shell_escape(const std::string& s) {
     return out;
 }
 
+bool no_color() {
+    // Read once: NO_COLOR does not change while the program runs.
+    static const bool set = [] {
+        const char* v = std::getenv("NO_COLOR");
+        return v != nullptr && *v != '\0';
+    }();
+    return set;
+}
+
 uint64_t steady_ms() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();

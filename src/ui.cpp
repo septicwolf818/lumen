@@ -3,6 +3,39 @@
 #include <algorithm>
 #include <cstring>
 
+namespace {
+
+// SGR sequences for UiStyle. Only bold/dim and the 8 basic colours, which the
+// Linux console renders; keeps every line compatible with TERM=linux.
+// Returns an empty string under NO_COLOR, so write_styled emits plain text.
+std::string sgr(int style) {
+    if (util::no_color()) return "";
+    std::string s;
+    if (style & STYLE_BOLD) s += "\033[1m";
+    if (style & STYLE_DIM) s += "\033[2m";
+    if (style & STYLE_RED) s += "\033[31m";
+    if (style & STYLE_GREEN) s += "\033[32m";
+    if (style & STYLE_YELLOW) s += "\033[33m";
+    if (style & STYLE_BLUE) s += "\033[34m";
+    if (style & STYLE_MAGENTA) s += "\033[35m";
+    if (style & STYLE_CYAN) s += "\033[36m";
+    return s;
+}
+
+void write_styled(Terminal& t, int style, const std::string& text) {
+    if (text.empty()) return;
+    std::string seq = sgr(style);
+    if (seq.empty()) {
+        t.write(text);
+        return;
+    }
+    t.write(seq);
+    t.write(text);
+    t.reset_attrs();
+}
+
+}  // namespace
+
 UI::UI(Terminal& term) : term_(term) {}
 
 void UI::set_status(const std::string& model, const std::string& session, const std::string& cwd) {
@@ -274,17 +307,32 @@ std::string UI::utf8_from_cp(uint32_t cp) {
 void UI::draw_status() {
     term_.move_cursor(1, 1);
     term_.clear_line();
-    std::string s = "model: " + (status_model_.empty() ? "(none)" : status_model_);
-    s += "  session: " + (status_session_.empty() ? "(none)" : status_session_);
-    if (!status_ctx_.empty()) {
-        s += "  ctx: " + status_ctx_;
+
+    // Assemble as (text, style) parts so the visible text can be truncated to
+    // the terminal width without cutting into an escape sequence.
+    struct Part {
+        std::string text;
+        int style;
+    };
+    std::vector<Part> parts;
+    auto kv = [&parts](const std::string& label, const std::string& value) {
+        if (!parts.empty()) parts.push_back({"  ", STYLE_NORMAL});
+        parts.push_back({label, STYLE_BOLD | STYLE_CYAN});
+        parts.push_back({value, STYLE_NORMAL});
+    };
+    kv("model:", status_model_.empty() ? "(none)" : status_model_);
+    kv("session:", status_session_.empty() ? "(none)" : status_session_);
+    if (!status_ctx_.empty()) kv("ctx:", status_ctx_);
+    if (!status_cwd_.empty()) kv("cwd:", status_cwd_);
+
+    int avail = term_.cols();
+    for (auto& p : parts) {
+        if (avail <= 0) break;
+        if (static_cast<int>(p.text.size()) > avail)
+            p.text.resize(static_cast<size_t>(avail));
+        write_styled(term_, p.style, p.text);
+        avail -= static_cast<int>(p.text.size());
     }
-    if (!status_cwd_.empty()) {
-        s += "  cwd: " + status_cwd_;
-    }
-    if (s.size() > static_cast<size_t>(term_.cols()))
-        s = s.substr(0, static_cast<size_t>(term_.cols()));
-    term_.write(s);
 }
 
 void UI::draw_viewport() {
@@ -302,13 +350,7 @@ void UI::draw_viewport() {
             std::string t = dl.text;
             if (t.size() > static_cast<size_t>(term_.cols()))
                 t = t.substr(0, static_cast<size_t>(term_.cols()));
-            if (dl.style == 1) {
-                term_.write("\033[2m");  // dim
-                term_.write(t);
-                term_.reset_attrs();
-            } else {
-                term_.write(t);
-            }
+            write_styled(term_, dl.style, t);  // escapes are added after truncation
         }
     }
 
@@ -325,14 +367,14 @@ void UI::draw_viewport() {
     }
     if (ind.empty()) ind = "---";
     if (static_cast<int>(ind.size()) > term_.cols()) ind = ind.substr(0, term_.cols());
-    term_.write(ind);
+    write_styled(term_, STYLE_DIM, ind);
 }
 
 void UI::draw_input() {
     term_.move_cursor(term_.rows(), 1);
     term_.clear_line();
     std::string prefix = "> ";
-    term_.write(prefix);
+    write_styled(term_, STYLE_BOLD | STYLE_GREEN, prefix);
     // show input, handle overflow simply: show tail around cursor
     int avail = term_.cols() - static_cast<int>(prefix.size()) - 1;
     if (avail < 4) avail = 4;
@@ -378,7 +420,7 @@ bool UI::confirm(InputReader& in, const std::string& prompt) {
     if (!lines.empty()) redraw();
     term_.move_cursor(term_.rows(), 1);
     term_.clear_line();
-    term_.write(question);
+    write_styled(term_, STYLE_BOLD | STYLE_YELLOW, question);  // must stand out
     term_.show_cursor();
     for (;;) {
         if (Terminal::got_sigterm.load()) return false;
@@ -395,7 +437,7 @@ bool UI::confirm(InputReader& in, const std::string& prompt) {
     }
 }
 
-void UI::message(const std::string& msg) {
+void UI::message(const std::string& msg, int style) {
     last_message_ = msg;
-    append(msg, 1);
+    append(msg, style);
 }

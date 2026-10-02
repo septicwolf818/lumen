@@ -133,6 +133,14 @@ Environment override:
 export OLLAMA_HOST=http://127.0.0.1:11434
 ```
 
+Output uses only the ANSI attributes the Linux console supports (bold, dim and
+the 8 basic colours). Set `NO_COLOR` (non-empty) to disable all colour and
+styling:
+
+```bash
+NO_COLOR=1 lumen
+```
+
 Sessions are stored under:
 
 ```

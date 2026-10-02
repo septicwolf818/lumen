@@ -13,10 +13,26 @@
 //   row H-1: separator / scroll indicator
 //   row H: input line
 
+// Line styles for scrollback: a bitmask so a line can carry bold/dim plus one
+// colour. Deliberately limited to the SGR attributes the Linux console
+// (TERM=linux) implements - bold, dim and the 8 basic foreground colours -
+// so no 256-colour (38;5;n) or truecolor (38;2;r;g;b) sequences are emitted.
+// STYLE_DIM == 1, so append(text, 1) callers keep their old meaning.
+enum UiStyle : int {
+    STYLE_NORMAL  = 0,
+    STYLE_DIM     = 1 << 0,
+    STYLE_BOLD    = 1 << 1,
+    STYLE_RED     = 1 << 2,
+    STYLE_GREEN   = 1 << 3,
+    STYLE_YELLOW  = 1 << 4,
+    STYLE_BLUE    = 1 << 5,
+    STYLE_MAGENTA = 1 << 6,
+    STYLE_CYAN    = 1 << 7,
+};
+
 struct DisplayLine {
     std::string text;
-    // optional simple style: 0=normal, 1=dim, 2=bold-ish (via ANSI)
-    int style = 0;
+    int style = 0;  // UiStyle bitmask
 };
 
 class UI {
@@ -74,7 +90,7 @@ public:
     bool confirm(InputReader& in, const std::string& prompt);
 
     // Show a temporary message on status / bottom
-    void message(const std::string& msg);
+    void message(const std::string& msg, int style = STYLE_DIM);
 
     // Queued messages waiting for the current response to finish
     void set_queue(size_t n) { queue_count_ = n; }

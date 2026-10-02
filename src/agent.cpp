@@ -123,7 +123,7 @@ void Agent::new_session(const std::string& name) {
     sys.content = system_prompt();
     session_.messages.push_back(sys);
     ui_.clear_conversation();
-    ui_.append("New session: " + session_.name, 1);
+    ui_.append("New session: " + session_.name, STYLE_BOLD);
     ui_.append("");
     cfg_.last_session = session_.name;
     cfg_.save();
@@ -139,14 +139,14 @@ void Agent::save_session(bool notify) {
         cfg_.save();
         if (notify) ui_.message("Session saved: " + session_.name);
     } else {
-        ui_.message("Failed to save session");
+        ui_.message("Failed to save session", STYLE_RED);
     }
 }
 
 void Agent::load_session(const std::string& name) {
     auto s = Session::load(name);
     if (!s) {
-        ui_.message("Session not found: " + name);
+        ui_.message("Session not found: " + name, STYLE_RED);
         return;
     }
     session_ = *s;
@@ -158,7 +158,7 @@ void Agent::load_session(const std::string& name) {
     cfg_.last_session = session_.name;
     cfg_.save();
     ui_.clear_conversation();
-    ui_.append("Loaded session: " + session_.name, 1);
+    ui_.append("Loaded session: " + session_.name, STYLE_BOLD);
     for (const auto& m : session_.messages) replay_message(m);
     ui_.append("");
     update_status();
@@ -176,19 +176,19 @@ void Agent::replay_message(const Message& m) {
             if (!rest.empty()) ui_.append(rest);
             ui_.append("");
         } else {
-            ui_.append("You:", 1);
+            ui_.append("You:", STYLE_BOLD);
             ui_.append(m.content);
             ui_.append("");
         }
     } else if (m.role == Role::Assistant) {
-        ui_.append("Agent:", 1);
+        ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);
         if (!m.content.empty()) ui_.append(m.content);
         if (m.tool_calls.is_array()) {
             for (const auto& tc : m.tool_calls) {
                 std::string name = "tool";
                 if (tc.contains("function") && tc["function"].contains("name"))
                     name = tc["function"]["name"].get<std::string>();
-                ui_.append("[tool] " + name, 1);
+                ui_.append("[tool] " + name, STYLE_YELLOW);
             }
         }
         ui_.append("");
@@ -196,7 +196,7 @@ void Agent::replay_message(const Message& m) {
         ui_.append("[result]", 1);
         std::string c = m.content;
         if (c.size() > 500) c = c.substr(0, 500) + "\n[truncated]";
-        ui_.append(c);
+        ui_.append(c, c.rfind("ERROR:", 0) == 0 ? STYLE_RED : STYLE_NORMAL);
         ui_.append("");
     }
 }
@@ -210,7 +210,7 @@ std::vector<nlohmann::json> Agent::build_messages() const {
 }
 
 void Agent::show_help() {
-    ui_.append("Commands:", 1);
+    ui_.append("Commands:", STYLE_BOLD);
     ui_.append("/help                 Show this help");
     ui_.append("/model [NAME]         List or select model");
     ui_.append("/session              Show current session");
@@ -236,14 +236,14 @@ bool Agent::select_model_interactive() {
     std::string err;
     auto models = ollama_->list_models(&err);
     if (!models) {
-        ui_.message("Error: " + err);
+        ui_.message("Error: " + err, STYLE_RED);
         return false;
     }
     if (models->empty()) {
-        ui_.message("No models found. Pull one with: ollama pull <name>");
+        ui_.message("No models found. Pull one with: ollama pull <name>", STYLE_RED);
         return false;
     }
-    ui_.append("Available models:", 1);
+        ui_.append("Available models:", STYLE_BOLD);
     for (size_t i = 0; i < models->size(); ++i) {
         ui_.append(std::to_string(i + 1) + ". " + (*models)[i].name);
     }
@@ -299,7 +299,7 @@ bool Agent::select_model_interactive() {
             return true;
         }
     }
-    ui_.message("Unknown model: " + line);
+    ui_.message("Unknown model: " + line, STYLE_RED);
     return false;
 }
 
@@ -332,7 +332,7 @@ void Agent::handle_command(const std::string& line) {
         }
     } else if (cmd == "/session") {
         if (tok.size() == 1) {
-            ui_.append("Session: " + session_.name + " id=" + session_.id, 1);
+            ui_.append("Session: " + session_.name + " id=" + session_.id, STYLE_BOLD);
             ui_.append("Model: " + session_.model);
             ui_.append("Messages: " + std::to_string(session_.messages.size()));
             ui_.append("cwd: " + session_.cwd);
@@ -341,34 +341,34 @@ void Agent::handle_command(const std::string& line) {
             new_session(n);
         } else if (tok[1] == "list") {
             auto names = Session::list();
-            ui_.append("Sessions:", 1);
+            ui_.append("Sessions:", STYLE_BOLD);
             if (names.empty()) ui_.append("(none)");
             for (auto& n : names) ui_.append("  " + n);
         } else if (tok[1] == "load" && tok.size() >= 3) {
             load_session(tok[2]);
         } else if (tok[1] == "delete" && tok.size() >= 3) {
             if (Session::remove(tok[2])) ui_.message("Deleted " + tok[2]);
-            else ui_.message("Not found");
+            else ui_.message("Not found", STYLE_RED);
         } else if (tok[1] == "rename" && tok.size() >= 4) {
             session_.name = tok[3];
             save_session();
         } else {
-            ui_.message("Usage: /session [new|list|load|delete|rename] ...");
+            ui_.message("Usage: /session [new|list|load|delete|rename] ...", STYLE_YELLOW);
         }
     } else if (cmd == "/cd") {
         if (tok.size() < 2) {
-            ui_.message("Usage: /cd PATH");
+            ui_.message("Usage: /cd PATH", STYLE_YELLOW);
             return;
         }
         std::string path = line.substr(line.find_first_not_of(' ', 3));
         path = util::trim(path);
         auto sp = util::resolve_safe_path(tools_->cwd(), path, true);
         if (!sp || !fs::is_directory(*sp)) {
-            ui_.message("Cannot cd: " + path);
+            ui_.message("Cannot cd: " + path, STYLE_RED);
             return;
         }
         if (chdir(sp->c_str()) != 0) {
-            ui_.message("chdir failed");
+            ui_.message("chdir failed", STYLE_RED);
             return;
         }
         tools_->set_cwd(sp->string());
@@ -382,7 +382,7 @@ void Agent::handle_command(const std::string& line) {
     } else if (cmd == "/compact") {
         do_compact();
     } else if (cmd == "/tools") {
-        ui_.append("Tools: read_file, write_file, edit_file, list_directory, execute, search", 1);
+        ui_.append("Tools: read_file, write_file, edit_file, list_directory, execute, search", STYLE_BOLD);
         ui_.append("auto_approve_tools=" + std::string(cfg_.auto_approve_tools ? "true" : "false"));
     } else if (cmd == "/config") {
         ui_.append(cfg_.to_json().dump(2));
@@ -392,7 +392,7 @@ void Agent::handle_command(const std::string& line) {
         update_status();
         ui_.message("Config reloaded");
     } else {
-        ui_.message("Unknown command: " + cmd + " (try /help)");
+        ui_.message("Unknown command: " + cmd + " (try /help)", STYLE_RED);
     }
 }
 
@@ -467,7 +467,7 @@ void Agent::handle_tab() {
 
 void Agent::do_compact(bool automatic) {
     if (cfg_.model.empty()) {
-        ui_.message("Select a model first (/model)");
+        ui_.message("Select a model first (/model)", STYLE_YELLOW);
         return;
     }
     if (session_.messages.size() <= 2) {
@@ -549,12 +549,12 @@ void Agent::do_compact(bool automatic) {
     ui_.append("");
 
     if (err == "interrupted" || abort_gen_) {
-        ui_.message(tag + " cancelled - conversation unchanged");
+        ui_.message(tag + " cancelled - conversation unchanged", STYLE_YELLOW);
         abort_gen_ = false;
         cancel_all_ = false;
         ui_.redraw();
     } else if (!ok) {
-        ui_.message("Compaction failed: " + err);
+        ui_.message("Compaction failed: " + err, STYLE_RED);
         ui_.redraw();
     } else {
         std::string sum = final_msg.contains("content") && final_msg["content"].is_string()
@@ -562,7 +562,7 @@ void Agent::do_compact(bool automatic) {
                               : "";
         sum = util::trim(sum);
         if (sum.empty()) {
-            ui_.message("Compaction failed: empty summary");
+            ui_.message("Compaction failed: empty summary", STYLE_RED);
             ui_.redraw();
         } else {
             Message sys;
@@ -645,7 +645,7 @@ void Agent::maybe_auto_compact() {
 void Agent::run_turn(const std::string& text) {
     if (text.empty()) return;
     if (cfg_.model.empty()) {
-        ui_.message("No model selected. Use /model");
+        ui_.message("No model selected. Use /model", STYLE_YELLOW);
         if (!select_model_interactive()) return;
         if (cfg_.model.empty()) return;
     }
@@ -659,10 +659,10 @@ void Agent::run_turn(const std::string& text) {
     user.content = text;
     session_.messages.push_back(user);
 
-    ui_.append("You:", 1);
+    ui_.append("You:", STYLE_BOLD);
     ui_.append(text);
     ui_.append("");
-    ui_.append("Agent:", 1);
+    ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);
     ui_.redraw();
     save_session(false);  // keep the user message even if we crash mid-response
 
@@ -803,7 +803,7 @@ void Agent::run_generation() {
         // Cancelled (Ctrl+C or a slash command): drop the unfinished assistant
         // message, but persist everything that did complete (tool results etc).
         ui_.append("");
-        ui_.message("(interrupted)");
+        ui_.message("(interrupted)", STYLE_YELLOW);
         generating_ = false;
         save_session(false);
         ui_.redraw();
@@ -811,7 +811,7 @@ void Agent::run_generation() {
     }
     if (!ok) {
         ui_.append("");
-        ui_.message("Error: " + err);
+        ui_.message("Error: " + err, STYLE_RED);
         generating_ = false;
         save_session(false);  // keep the user message and prior turns
         ui_.redraw();
@@ -875,7 +875,7 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
                 }
             }
         }
-        ui_.append("[tool] " + name, 1);
+        ui_.append("[tool] " + name, STYLE_YELLOW);
         if (args.is_object()) {
             for (auto it = args.begin(); it != args.end(); ++it) {
                 std::string v = it.value().is_string() ? it.value().get<std::string>() : it.value().dump();
@@ -892,7 +892,7 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
         ui_.append("[result]", 1);
         std::string out = result.output;
         if (out.size() > 2000) out = out.substr(0, 2000) + "\n[truncated]";
-        ui_.append(out);
+        ui_.append(out, out.rfind("ERROR:", 0) == 0 ? STYLE_RED : STYLE_NORMAL);
         ui_.append("");
         ui_.redraw();
 
@@ -908,7 +908,7 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
     if (cancel_all_ || !running_ || Terminal::got_sigterm.load()) return;
 
     // Continue generation with tool results
-    ui_.append("Agent:", 1);
+    ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);
     run_generation();
 }
 
