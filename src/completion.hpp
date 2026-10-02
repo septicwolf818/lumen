@@ -3,7 +3,10 @@
 // Slash-command completion.
 // Pure, header-only logic so it can be unit tested without a TTY.
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -77,10 +80,56 @@ inline std::vector<std::string> filter(const std::vector<std::string>& pool,
 
 }  // namespace detail
 
+// Candidates for a path argument (e.g. "/cd /usr/lo<Tab>"). Returns full
+// replacement tokens: directories keep a trailing '/' so completion can
+// continue into them. "~/..." is resolved against $HOME but stays as typed;
+// hidden entries are offered only when the word already starts with '.'.
+inline std::vector<std::string> path_candidates(const std::string& word) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    if (word == "~") {
+        out.push_back("~/");
+        return out;
+    }
+
+    // Split into the directory prefix as typed and the name being completed.
+    std::string dir, name;
+    size_t slash = word.rfind('/');
+    if (slash == std::string::npos) {
+        name = word;  // relative to the working directory
+    } else {
+        dir = word.substr(0, slash + 1);
+        name = word.substr(slash + 1);
+    }
+
+    std::string list_dir = dir;
+    if (dir.rfind("~/", 0) == 0) {
+        const char* home = std::getenv("HOME");
+        if (!home || !*home) return out;
+        list_dir = std::string(home) + dir.substr(1);
+    }
+
+    std::error_code ec;
+    fs::directory_iterator it(list_dir.empty() ? fs::path(".") : fs::path(list_dir),
+                              fs::directory_options::skip_permission_denied, ec);
+    if (ec) return out;
+    for (; !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const std::string fname = it->path().filename().string();
+        if (fname.empty()) continue;
+        if (fname[0] == '.' && (name.empty() || name[0] != '.')) continue;
+        if (fname.compare(0, name.size(), name) != 0) continue;
+        std::error_code tec;
+        out.push_back(dir + fname + (fs::is_directory(it->path(), tec) ? "/" : ""));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
 // Find the token containing `cursor` and, when it is a completable position,
 // the candidates for it. Completable positions are:
 //   - the first token, when the input starts with '/'
-//   - the second token of "/session ..."
+//   - the second token of "/session ..." (subcommands)
+//   - the second token of "/cd ..." (filesystem paths)
 inline Target analyze(const std::string& input, size_t cursor) {
     Target t;
     if (input.empty() || input[0] != '/') return t;
@@ -135,6 +184,11 @@ inline Target analyze(const std::string& input, size_t cursor) {
         if (detail::ieq(first, "/session")) {
             t.valid = true;
             t.matches = detail::filter(session_subcommands(), word);
+            return t;
+        }
+        if (detail::ieq(first, "/cd")) {
+            t.valid = true;
+            t.matches = path_candidates(word);
             return t;
         }
     }
