@@ -41,6 +41,11 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Draw the session on the alt screen so the console content from before
+    // lumen can be restored on exit (ignored where unsupported - the exit
+    // dump then rebuilds the screen instead).
+    term.enter_alt_screen();
+
     // Make sure we restore even on unexpected exit paths
     // (destructor of Terminal also restores)
 
@@ -48,18 +53,28 @@ int main(int argc, char** argv) {
     UI ui(term);
     Agent agent(term, ui, input);
 
+    // Shared exit path: cooked mode first (so \n behaves), then the screen
+    // dump (harmless inside the alt screen, the fallback when it was
+    // ignored), then leave the alt screen to restore previous content, then
+    // the farewell line for the shell.
+    auto finish = [&]() {
+        term.restore();
+        ui.dump_screen();
+        term.leave_alt_screen();
+        ui.farewell();
+        std::fflush(stdout);
+    };
+
     int rc = 0;
+    const char* fatal = nullptr;
     try {
         rc = agent.run();
     } catch (const std::exception& e) {
-        term.restore();
-        std::fprintf(stderr, "Fatal: %s\n", e.what());
+        fatal = e.what();
         rc = 1;
     }
 
-    term.restore();
-    // Leave a clean line
-    std::fputs("\n", stdout);
-    std::fflush(stdout);
+    finish();
+    if (fatal) std::fprintf(stderr, "Fatal: %s\n", fatal);
     return rc;
 }

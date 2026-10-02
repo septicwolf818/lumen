@@ -78,6 +78,18 @@ void Terminal::restore() {
     }
 }
 
+void Terminal::enter_alt_screen() {
+    if (!isatty(STDOUT_FILENO)) return;
+    write("\033[?1049h");
+    alt_ = true;
+}
+
+void Terminal::leave_alt_screen() {
+    if (!alt_) return;
+    write("\033[?1049l");  // restores the pre-alt screen + saved cursor
+    alt_ = false;
+}
+
 void Terminal::update_size() {
     struct winsize ws{};
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0 && ws.ws_col > 0) {

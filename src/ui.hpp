@@ -89,6 +89,11 @@ public:
     void redraw();
     void on_resize();
 
+    // Exit path: reprint the conversation that is on screen (plain Linux
+    // console sequences) and print the farewell line for the shell.
+    void dump_screen();
+    void farewell();
+
     // Prompt for y/N confirmation (blocks on input)
     bool confirm(InputReader& in, const std::string& prompt);
 
@@ -133,6 +138,7 @@ private:
 
     void wrap_and_push(const std::string& text, int style);
     std::vector<std::string> wrap(const std::string& text, int width) const;
+    void viewport_window(int& start, int& rows) const;
     void draw_status();
     void draw_viewport();
     void draw_input();

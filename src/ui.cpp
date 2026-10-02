@@ -360,11 +360,19 @@ void UI::draw_status() {
     }
 }
 
-void UI::draw_viewport() {
-    int rows = viewport_rows();
+// First conversation line and row count of the window currently shown.
+// Shared by the live drawing and the exit dump so both show the same screen.
+void UI::viewport_window(int& start, int& rows) const {
+    rows = viewport_rows();
     int total = static_cast<int>(lines_.size());
-    int start = total - rows - static_cast<int>(scroll_offset_);
+    start = total - rows - static_cast<int>(scroll_offset_);
     if (start < 0) start = 0;
+}
+
+void UI::draw_viewport() {
+    int start, rows;
+    viewport_window(start, rows);
+    int total = static_cast<int>(lines_.size());
 
     for (int i = 0; i < rows; ++i) {
         term_.move_cursor(2 + i, 1);
@@ -431,6 +439,43 @@ void UI::redraw() {
     draw_input();
     term_.show_cursor();
     // cursor already placed in draw_input
+}
+
+// Reprint the conversation window sequentially so it stays readable after
+// the app exits: inside the alt screen it is discarded with the buffer; on a
+// terminal that ignored the alt screen it rebuilds a clean last frame (the
+// status / separator / input rows are dropped). Only sequences the plain
+// Linux console supports are used (home, erase display, SGR).
+void UI::dump_screen() {
+    int start, rows;
+    viewport_window(start, rows);
+    int total = static_cast<int>(lines_.size());
+    int width = std::max(10, term_.cols());
+    term_.clear_screen();
+    term_.move_cursor(1, 1);
+    for (int i = 0; i < rows; ++i) {
+        int idx = start + i;
+        if (idx >= total) break;
+        const auto& dl = lines_[static_cast<size_t>(idx)];
+        // Re-wrap to the current width: lines were wrapped when appended and
+        // the window may have shrunk since (on_resize does not re-wrap).
+        for (const auto& w : wrap(dl.text, width)) {
+            write_styled(term_, dl.style, w);
+            term_.write("\r\n");
+        }
+    }
+    // Cursor left at column 1 of the row after the last printed line.
+}
+
+void UI::farewell() {
+    // Leading newline: after leave_alt_screen() the cursor sits right behind
+    // the old shell prompt, so the message must start on its own row.
+    term_.write("\r\n");
+    write_styled(term_, STYLE_BOLD | STYLE_GREEN, "lumen: Bye!");
+    term_.write(" Session was ");
+    write_styled(term_, STYLE_BOLD,
+                 status_session_.empty() ? "(none)" : status_session_);
+    term_.write("\r\n");
 }
 
 void UI::on_resize() {

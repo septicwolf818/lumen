@@ -113,6 +113,11 @@ The first `Tab` shows all matches and extends to their common prefix, further
 presses cycle through them. `/session` subcommands complete the same way
 (`/session l<Tab>` -> `/session list`).
 
+When a session still has an auto-generated name and a model is configured,
+lumen names it from the conversation after the first turn: the model's answer is
+lower-cased, every run of non-alphanumeric characters becomes `-`, and a name
+already in use gets a `-2`, `-3`, ... suffix.
+
 Paths passed to `/cd` and to tool `path` arguments may start with `~`, which
 expands to your home directory (`/cd ~/projects`).
 
@@ -196,7 +201,7 @@ Verify:
 - Tool calls + confirmation
 - Session save/load
 - Terminal resize (SIGWINCH)
-- Clean exit (terminal restored)
+- Clean exit (screen restored, `lumen: Bye! Session was <name>` printed)
 
 ## License
 

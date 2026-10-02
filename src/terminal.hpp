@@ -19,6 +19,14 @@ public:
     // Restore original settings
     void restore();
 
+    // Alternate screen buffer (DECSET/DECRST 1049): the session is drawn on
+    // the alt buffer so leave_alt_screen() can restore the console content
+    // that was on screen before lumen started. Plain sequences only - what a
+    // Linux VT understands; older kernels ignore them and the UI's exit dump
+    // rebuilds the screen instead.
+    void enter_alt_screen();
+    void leave_alt_screen();
+
     int rows() const { return rows_; }
     int cols() const { return cols_; }
 
@@ -56,6 +64,7 @@ private:
     struct termios orig_{};
     bool raw_ = false;
     bool has_orig_ = false;
+    bool alt_ = false;
     int rows_ = 24;
     int cols_ = 80;
 };

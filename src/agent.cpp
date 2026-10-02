@@ -3,6 +3,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <unistd.h>
 
 namespace {
@@ -25,6 +26,43 @@ std::string join_batch(const std::vector<std::string>& msgs) {
         out += m;
     }
     return out;
+}
+
+// Role labels for prompts (compaction summary, title generation).
+const char* role_name(Role r) {
+    switch (r) {
+        case Role::User: return "User";
+        case Role::Assistant: return "Assistant";
+        case Role::Tool: return "Tool";
+        default: return "System";
+    }
+}
+
+// Conversation as plain text for a prompt. include_tools=false drops tool
+// results and the tool_calls JSON - titles only need user/assistant text.
+std::string transcript(const std::vector<Message>& msgs, size_t max_msgs,
+                       size_t per_msg, bool include_tools) {
+    std::ostringstream out;
+    size_t shown = 0;
+    for (const auto& m : msgs) {
+        if (m.role == Role::System) continue;
+        if (!include_tools && m.role == Role::Tool) continue;
+        if (shown >= max_msgs) break;
+        ++shown;
+        std::string c = m.content;
+        if (c.size() > per_msg) c = c.substr(0, per_msg) + "\n[...truncated]";
+        out << role_name(m.role) << ": " << c << "\n";
+        if (include_tools && m.tool_calls.is_array() && !m.tool_calls.empty())
+            out << "Assistant tool calls: " << m.tool_calls.dump() << "\n";
+    }
+    return out.str();
+}
+
+// Names the app assigns itself: first-run "default" or session-<hex>.
+// Everything else came from the user (/session new|rename) or from title
+// generation, so it must never be regenerated over.
+bool auto_named(const std::string& n) {
+    return n.empty() || n == "default" || n.rfind("session-", 0) == 0;
 }
 }  // namespace
 
@@ -66,6 +104,7 @@ void Agent::init_session() {
             // replay messages into UI
             for (const auto& m : session_.messages) replay_message(m);
             update_status();
+            maybe_generate_title();  // auto-named sessions get an AI title
             return;
         }
     }
@@ -141,6 +180,7 @@ void Agent::new_session(const std::string& name) {
     session_ = Session{};
     session_.id = Session::make_id();
     session_.name = name.empty() ? "session-" + session_.id.substr(2, 6) : name;
+    title_attempted_ = false;
     session_.model = cfg_.model;
     session_.created = util::now_iso8601();
     session_.modified = session_.created;
@@ -172,6 +212,116 @@ bool Agent::save_session(bool notify) {
     return false;
 }
 
+std::function<bool()> Agent::abort_watcher() {
+    return [this]() -> bool {
+        if (Terminal::got_sigterm.load()) return true;
+        if (Terminal::got_sigint.load()) {
+            abort_gen_ = true;
+            Terminal::got_sigint.store(false);
+        }
+        pump_input();  // keep the input line alive while generating
+        return abort_gen_.load();
+    };
+}
+
+bool Agent::rename_session(const std::string& new_name) {
+    if (new_name.empty() || new_name == session_.name) return false;
+    std::string old_name = session_.name;
+    session_.name = new_name;
+    if (save_session(false)) {
+        if (Session::sanitize_filename(old_name) !=
+            Session::sanitize_filename(new_name)) {
+            Session::remove(old_name);
+        }
+        update_status();
+        return true;
+    }
+    session_.name = old_name;  // keep the old identity on failure
+    return false;
+}
+
+// One AI naming attempt per session per run: only for auto-generated names
+// (default / session-<hex>) that already have real conversation context.
+// The answer is slugged to lowercase hyphenated form and de-duplicated
+// against the existing session files (name-2, name-3, ...).
+void Agent::maybe_generate_title() {
+    if (title_attempted_) return;
+    if (!auto_named(session_.name)) return;
+    if (cfg_.model.empty()) return;
+    if (Terminal::got_sigterm.load()) return;
+    bool has_ctx = false;
+    for (const auto& m : session_.messages) {
+        if (m.role != Role::System) { has_ctx = true; break; }
+    }
+    if (!has_ctx) return;
+    title_attempted_ = true;
+
+    std::ostringstream prompt;
+    prompt << "Name this terminal chat session.\n"
+           << "Reply with exactly one title and nothing else: 2 to 5 lowercase "
+              "words made of letters and digits, separated by single hyphens. "
+              "No quotes, no punctuation, no explanation.\n"
+              "Example: debugging-application\n\n"
+           << "<conversation>\n"
+           << transcript(session_.messages, 8, 300, false)
+           << "</conversation>\n";
+
+    WorkingGuard work(ui_);
+    ui_.append("", STYLE_DIM);
+    ui_.append("[title] naming session from conversation...", STYLE_DIM);
+    ui_.redraw();
+
+    abort_gen_ = false;
+    cancel_all_ = false;
+    Terminal::got_sigint.store(false);
+    Terminal::sigint_count.store(0);
+    auto should_abort = abort_watcher();
+
+    std::vector<nlohmann::json> msgs = {
+        {{"role", "user"}, {"content", prompt.str()}}};
+    nlohmann::json final_msg;
+    std::string err;
+    bool ok = ollama_->chat_stream(cfg_.model, msgs, nlohmann::json::array(),
+                                   nullptr, nullptr, nullptr, should_abort,
+                                   &err, &final_msg);
+    ui_.append("");
+
+    if (err == "interrupted" || abort_gen_) {
+        abort_gen_ = false;
+        cancel_all_ = false;
+        ui_.message("[title] cancelled", STYLE_YELLOW);
+        ui_.redraw();
+        return;
+    }
+    if (!ok) {
+        ui_.message("[title] failed: " + err, STYLE_YELLOW);
+        ui_.redraw();
+        return;
+    }
+    std::string raw =
+        final_msg.contains("content") && final_msg["content"].is_string()
+            ? final_msg["content"].get<std::string>()
+            : "";
+    std::string slug = Session::slugify(util::trim(raw));
+    if (slug.empty()) {
+        ui_.message("[title] model returned no usable title", STYLE_YELLOW);
+        ui_.redraw();
+        return;
+    }
+    std::string target =
+        Session::unique_title(slug, Session::sanitize_filename(session_.name));
+    if (target == session_.name) {
+        ui_.redraw();
+        return;
+    }
+    if (rename_session(target)) {
+        ui_.message("Session title: " + session_.name);
+    } else {
+        ui_.message("[title] failed to save session", STYLE_RED);
+    }
+    ui_.redraw();
+}
+
 void Agent::load_session(const std::string& name) {
     auto s = Session::load(name);
     if (!s) {
@@ -179,6 +329,7 @@ void Agent::load_session(const std::string& name) {
         return;
     }
     session_ = *s;
+    title_attempted_ = false;
     if (!session_.model.empty()) cfg_.model = session_.model;
     if (!session_.cwd.empty()) {
         if (chdir(session_.cwd.c_str()) == 0) {
@@ -194,6 +345,7 @@ void Agent::load_session(const std::string& name) {
     for (const auto& m : session_.messages) replay_message(m);
     ui_.append("");
     update_status();
+    maybe_generate_title();  // auto-named sessions get an AI title
 }
 
 // Draw one stored message the same way on startup and on /session load,
@@ -450,18 +602,10 @@ void Agent::handle_command(const std::string& line) {
             } else if (tok[3] == session_.name) {
                 ui_.message("Session is already named " + session_.name);
             } else {
-                std::string old_name = session_.name;
-                session_.name = tok[3];
-                if (save_session(false)) {
-                    if (Session::sanitize_filename(old_name) !=
-                        Session::sanitize_filename(session_.name)) {
-                        Session::remove(old_name);
-                    }
+                // Shared with title generation: save under the new name
+                // first, remove the old file only after the save worked.
+                if (rename_session(tok[3]))
                     ui_.message("Renamed to " + session_.name);
-                    update_status();
-                } else {
-                    session_.name = old_name;  // keep the old identity on failure
-                }
             }
         } else {
             ui_.message("Usage: /session [new|list|load|delete|rename] ...", STYLE_YELLOW);
@@ -593,15 +737,6 @@ void Agent::do_compact(bool automatic) {
     }
     WorkingGuard work(ui_);
 
-    auto role_name = [](Role r) -> const char* {
-        switch (r) {
-            case Role::User: return "User";
-            case Role::Assistant: return "Assistant";
-            case Role::Tool: return "Tool";
-            default: return "System";
-        }
-    };
-
     size_t before = session_.messages.size();
     std::string tag = automatic ? "[auto-compact]" : "[compact]";
     ui_.append("");
@@ -613,17 +748,10 @@ void Agent::do_compact(bool automatic) {
     // model must reproduce, so the result is a structured handoff another
     // agent can continue from.
     std::ostringstream prompt;
-    prompt << "Here is the conversation so far:\n\n<conversation>\n";
-    for (const auto& m : session_.messages) {
-        if (m.role == Role::System) continue;
-        std::string c = m.content;
-        if (c.size() > 2000) c = c.substr(0, 2000) + "\n[...truncated]";
-        prompt << role_name(m.role) << ": " << c << "\n";
-        if (m.tool_calls.is_array() && !m.tool_calls.empty())
-            prompt << "Assistant tool calls: " << m.tool_calls.dump() << "\n";
-    }
-    prompt
-        << "</conversation>\n\n"
+    prompt << "Here is the conversation so far:\n\n<conversation>\n"
+           << transcript(session_.messages,
+                         std::numeric_limits<size_t>::max(), 2000, true)
+           << "</conversation>\n\n"
         << "Create a new anchored summary of the conversation history above "
            "so another coding agent can continue the work.\n\n"
         << "Output exactly the Markdown structure shown inside <template> and "
@@ -676,15 +804,7 @@ void Agent::do_compact(bool automatic) {
     cancel_all_ = false;
     Terminal::got_sigint.store(false);
     Terminal::sigint_count.store(0);
-    auto should_abort = [this]() -> bool {
-        if (Terminal::got_sigterm.load()) return true;
-        if (Terminal::got_sigint.load()) {
-            abort_gen_ = true;
-            Terminal::got_sigint.store(false);
-        }
-        pump_input();
-        return abort_gen_.load();
-    };
+    auto should_abort = abort_watcher();
 
     std::vector<nlohmann::json> msgs = {
         {{"role", "user"}, {"content", prompt.str()}}};
@@ -858,6 +978,9 @@ void Agent::run_turn(const std::string& text) {
         handle_command(cmd);
         ui_.redraw();
     }
+
+    // First completed turn gives an auto-named session its AI title.
+    if (running_) maybe_generate_title();
 }
 
 void Agent::handle_prompt(const std::string& text) {

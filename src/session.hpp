@@ -39,4 +39,11 @@ struct Session {
     static std::string make_id();
     // Filesystem-safe form of a session name (shared by save and rename)
     static std::string sanitize_filename(const std::string& name);
+    // Lowercase a model-provided title: alphanumeric kept, every other
+    // character becomes '-', runs collapse, leading/trailing '-' trimmed.
+    static std::string slugify(const std::string& raw);
+    // base, or base-2 / base-3 ... when another session file already uses it.
+    // exclude_stem: this session's own filename stem (never a collision).
+    static std::string unique_title(const std::string& base,
+                                    const std::string& exclude_stem);
 };

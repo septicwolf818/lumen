@@ -113,6 +113,48 @@ std::string Session::sanitize_filename(const std::string& name) {
     return fname;
 }
 
+std::string Session::slugify(const std::string& raw) {
+    std::string out;
+    bool prev_dash = false;
+    for (unsigned char c : raw) {
+        if (std::isalnum(c)) {
+            out += static_cast<char>(std::tolower(c));
+            prev_dash = false;
+        } else if (!out.empty() && !prev_dash) {
+            out += '-';  // spaces, punctuation, quotes, markdown, ...
+            prev_dash = true;
+        }
+    }
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    if (out.size() > 60) {
+        out.resize(60);
+        size_t cut = out.find_last_of('-');
+        if (cut != std::string::npos && cut >= 12) out.resize(cut);
+        while (!out.empty() && out.back() == '-') out.pop_back();
+    }
+    return out;
+}
+
+std::string Session::unique_title(const std::string& base,
+                                  const std::string& exclude_stem) {
+    std::string b = base.empty() ? "session" : base;
+    // Session files are addressed by filename stem (save uses the sanitized
+    // name, or the id), so stems are exactly what must not collide - two
+    // sessions sharing a stem would overwrite each other's file.
+    auto taken = [&exclude_stem](const std::string& cand) {
+        for (const auto& s : Session::list()) {
+            if (s == cand && s != exclude_stem) return true;
+        }
+        return false;
+    };
+    if (!taken(b)) return b;
+    for (int i = 2; i < 1000; ++i) {
+        std::string c = b + "-" + std::to_string(i);
+        if (!taken(c)) return c;
+    }
+    return b + "-" + make_id().substr(2, 6);  // pathological, never in practice
+}
+
 bool Session::save() const {
     util::ensure_dir(util::sessions_dir());
     // Use name as filename if safe, else id

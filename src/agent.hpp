@@ -9,6 +9,7 @@
 #include "terminal.hpp"
 #include "completion.hpp"
 #include <atomic>
+#include <functional>
 #include <string>
 #include <vector>
 #include <deque>
@@ -53,6 +54,9 @@ private:
     // Cancel requested (Ctrl+C or slash): stop generation, tool rounds and queue.
     bool cancel_all_ = false;
 
+    // Title generation: at most one AI naming attempt per session per run.
+    bool title_attempted_ = false;
+
     // Context tracking for the status bar and auto-compaction.
     // ctx_anchor_ tokens were confirmed by Ollama (prompt_eval_count +
     // eval_count) for the history state of ctx_anchor_chars_ bytes; anything
@@ -83,6 +87,15 @@ private:
     void update_ctx_display();                    // push "12.4k/32k (39%)" to UI
     void reset_ctx_tracking();                    // drop anchor + limit
     bool save_session(bool notify = true);
+    // Rename the current session: save under the new name first, delete the
+    // old file only after the save succeeded, roll back the name on failure.
+    bool rename_session(const std::string& new_name);
+    // Ask the model for a title when the session still has an auto-generated
+    // name but real conversation context to derive one from.
+    void maybe_generate_title();
+    // Shared abort watcher for background generations (compaction, titles):
+    // Ctrl-C sets abort_gen_, the input line keeps pumping.
+    std::function<bool()> abort_watcher();
     void new_session(const std::string& name = "");
     void load_session(const std::string& name);
     std::vector<nlohmann::json> build_messages() const;
