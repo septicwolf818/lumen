@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <csignal>
 #include <algorithm>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -130,7 +131,7 @@ nlohmann::json tool_definitions() {
             {"type", "function"},
             {"function", {
                 {"name", "search"},
-                {"description", "Search for a text pattern recursively under path using ripgrep (or grep). No matches is a normal result, not an error."},
+                {"description", "Search for a text pattern recursively under path using ripgrep (or grep). Each match is one line of path:line:text, with path relative to the working directory. No matches is a normal result, not an error."},
                 {"parameters", {
                     {"type", "object"},
                     {"properties", {
@@ -478,15 +479,19 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     close(pipefd[0]);
     int status = 0;
     waitpid(pid, &status, 0);
-    if (output.size() >= limit) output += "\n[output truncated]\n";
+    // Reaching the limit closes the pipe under the child (SIGPIPE, reported by
+    // the shell as 141), so the exit status is our doing and not a failure.
+    bool truncated = output.size() >= limit;
+    if (truncated) output += "\n[output truncated]\n";
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     if (WIFSIGNALED(status)) {
-        output += "\n[killed by signal " + std::to_string(WTERMSIG(status)) + "]\n";
-    } else if (code != 0) {
+        if (!(truncated && WTERMSIG(status) == SIGPIPE))
+            output += "\n[killed by signal " + std::to_string(WTERMSIG(status)) + "]\n";
+    } else if (code != 0 && !truncated) {
         output += "\n[exit code " + std::to_string(code) + "]\n";
     }
     if (output.empty()) output = "(no output)";
-    return {code == 0, output, false};
+    return {code == 0 || truncated, output, false};
 }
 
 ToolResult ToolRunner::search(const nlohmann::json& args) {
@@ -508,19 +513,30 @@ ToolResult ToolRunner::search(const nlohmann::json& args) {
 
     // Prefer rg, fall back to grep -r. Exit code 1 means "no matches", which is
     // a normal result, so normalize it to 0; any other failure stays an error.
-    std::string cmd;
-    if (fs::exists("/usr/bin/rg") || fs::exists("/bin/rg")) {
-        cmd = "rg -n --no-heading -S --max-count 50 " + util::shell_escape(pattern) + " " +
-              util::shell_escape(*sp) + " || [ $? -eq 1 ]";
-    } else {
-        cmd = "grep -rnH --max-count=50 -E " + util::shell_escape(pattern) + " " +
-              util::shell_escape(*sp) + " || [ $? -eq 1 ]";
+    // probe PATH at run time - rg is not always in /usr/bin (homebrew, etc.)
+    std::string root = *sp;
+    std::error_code rec;
+    fs::path rel = fs::relative(*sp, fs::weakly_canonical(cwd_), rec);
+    if (!rec) {
+        std::string rs = rel.string();
+        if (rs.empty()) {
+            root = ".";
+        } else if (rs.rfind("..", 0) != 0) {
+            root = rs;  // stays under cwd, so matches read back as relative paths
+        }
     }
+    std::string pat = util::shell_escape(pattern);
+    std::string rt = util::shell_escape(root);
+    std::string cmd = "if command -v rg >/dev/null 2>&1; then "
+                      "rg -n --no-heading --with-filename -S --max-count 50 " + pat + " " + rt +
+                      " || [ $? -eq 1 ]; else "
+                      "grep -rnH --max-count=50 -E " + pat + " " + rt +
+                      " || [ $? -eq 1 ]; fi";
     // reuse execute logic but without extra confirm
     nlohmann::json a;
     a["command"] = cmd;
     auto r = execute(a);
     if (r.ok && r.output == "(no output)")
-        r.output = "no matches for " + util::shell_escape(pattern) + " in " + *sp;
+        r.output = "no matches for " + util::shell_escape(pattern) + " in " + root;
     return r;
 }

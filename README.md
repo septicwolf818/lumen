@@ -147,7 +147,7 @@ The model can request:
 |-----------------|---------------------------------|--------------|
 | `read_file`     | Read a text file                | No           |
 | `list_directory`| List directory                  | No           |
-| `search`        | Recursive text search (grep)    | No           |
+| `search`        | Recursive text search (ripgrep/grep) | No      |
 | `write_file`    | Create/overwrite a file         | Yes          |
 | `edit_file`     | Replace a portion of a file     | Yes          |
 | `execute`       | Run a shell command             | Yes          |
