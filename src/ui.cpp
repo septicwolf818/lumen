@@ -336,7 +336,7 @@ void UI::draw_viewport() {
     term_.clear_line();
     std::string ind;
     if (working_depth_ > 0) {
-        static const char kFrames[] = "|-\\/";
+        static const char kFrames[] = "|/-\\";
         ind = std::string(1, kFrames[spinner_frame_]);
     }
     if (scroll_offset_ > 0) {

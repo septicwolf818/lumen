@@ -128,7 +128,7 @@ private:
     std::string last_message_;
     size_t queue_count_ = 0;
     int working_depth_ = 0;      // nested set_working() frames
-    int spinner_frame_ = 0;      // index into "|-\\/"
+    int spinner_frame_ = 0;      // index into "|/-\"
     uint64_t spinner_last_ms_ = 0;
 
     void wrap_and_push(const std::string& text, int style);
