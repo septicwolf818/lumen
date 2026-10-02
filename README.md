@@ -49,6 +49,7 @@ Other targets:
 
 ```bash
 make install    # no sudo needed: installs to ~/.local (or /usr/local under sudo)
+make uninstall  # remove the binary; asks about config and sessions too
 make clean      # remove the build directory
 ```
 
