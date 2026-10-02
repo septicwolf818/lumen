@@ -23,6 +23,10 @@ std::string trim(const std::string& s);
 std::vector<std::string> split_lines(const std::string& s);
 std::string join(const std::vector<std::string>& parts, const std::string& sep);
 
+// Expand a leading "~" or "~/" to the home directory. Forms we cannot resolve
+// safely (~user, $VAR) are returned unchanged rather than mangled.
+std::string expand_path(const std::string& p);
+
 // Safe path: resolve relative to cwd and optionally forbid escaping cwd
 std::optional<fs::path> resolve_safe_path(const fs::path& cwd,
                                           const std::string& user_path,

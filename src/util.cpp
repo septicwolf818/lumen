@@ -81,11 +81,17 @@ std::string join(const std::vector<std::string>& parts, const std::string& sep) 
     return r;
 }
 
+std::string expand_path(const std::string& p) {
+    if (p == "~") return home_dir();
+    if (p.rfind("~/", 0) == 0) return home_dir() + p.substr(1);
+    return p;
+}
+
 std::optional<fs::path> resolve_safe_path(const fs::path& cwd,
                                           const std::string& user_path,
                                           bool allow_escape) {
     try {
-        fs::path p = user_path;
+        fs::path p = expand_path(user_path);  // "~/x" must not become cwd/"~/x"
         if (p.is_relative()) {
             p = cwd / p;
         }

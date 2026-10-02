@@ -112,6 +112,9 @@ The first `Tab` shows all matches and extends to their common prefix, further
 presses cycle through them. `/session` subcommands complete the same way
 (`/session l<Tab>` -> `/session list`).
 
+Paths passed to `/cd` and to tool `path` arguments may start with `~`, which
+expands to your home directory (`/cd ~/projects`).
+
 ## Configuration
 
 `~/.config/lumen/config.json`
