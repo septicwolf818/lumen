@@ -13,12 +13,18 @@ identifier-based lexer can match are kept, and layers on the types, constants
 and builtins that our highlighter uses (which are not keywords).
 """
 import json
+import os
 import re
 import sys
 import urllib.request
 
 DEFAULT_URL = ("https://raw.githubusercontent.com/radosslav/languages-keywords/"
                "main/README.md")
+# Committed snapshot of the upstream README, used when the network is
+# unavailable so regeneration stays reproducible offline. The generated
+# data/keywords.json is itself committed, so the program never depends on this
+# at build or run time.
+SNAPSHOT = os.path.join(os.path.dirname(__file__), "..", "data", "upstream-keywords.md")
 
 # Which upstream heading maps to our profile name; the last matching section
 # wins (so C++20 / Python 3.10 / Java 17 are used).
@@ -43,6 +49,8 @@ SECTION_TO_PROFILE = {
     "Erlang": "erlang",
     "Fortran": "fortran",
     "Visual Basic": "vbnet",
+    "MATLAB": "matlab",
+    "Objective-C": "objc",
 }
 
 # Identifier-safe cleanup: drop trailing "()" and leading/trailing decoration
@@ -99,6 +107,15 @@ SYNTAX = {
     "ocaml":      {"line": "",   "bopen": "(*",  "bclose": "*)",  "ci": False, "hash": False},
     "julia":      {"line": "#",  "bopen": "#=",  "bclose": "=#",  "ci": False, "hash": True},
     "fortran":    {"line": "!",  "bopen": "",    "bclose": "",    "ci": True,  "hash": False},
+    "matlab":     {"line": "%",  "bopen": "%{",  "bclose": "%}",  "ci": False, "hash": False},
+    "objc":       {"line": "//", "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "pascal":     {"line": "//", "bopen": "{",   "bclose": "}",   "ci": True,  "hash": False},
+    "lisp":       {"line": ";",  "bopen": "#|",  "bclose": "|#",  "ci": True,  "hash": False},
+    "assembly":   {"line": ";",  "bopen": "",    "bclose": "",    "ci": True,  "hash": False},
+    "ada":        {"line": "--", "bopen": "",    "bclose": "",    "ci": True,  "hash": False},
+    "prolog":     {"line": "%",  "bopen": "/*",  "bclose": "*/",  "ci": False, "hash": False},
+    "fsharp":     {"line": "//", "bopen": "(*",  "bclose": "*)",  "ci": False, "hash": False},
+    "nim":        {"line": "#",  "bopen": "#[",  "bclose": "]#",  "ci": True,  "hash": True},
     "erlang":     {"line": "%",  "bopen": "",    "bclose": "",    "ci": False, "hash": False},
     "lua":        {"line": "--", "bopen": "--[[", "bclose": "]]", "ci": False, "hash": False},
     "sql":        {"line": "--", "bopen": "/*",  "bclose": "*/",  "ci": True,  "hash": False},
@@ -146,6 +163,12 @@ TYPES = {
     "dart": ["int","double","num","String","bool","List","Map","Set","Object","dynamic",
              "void","Future","Stream"],
     "elixir": ["integer","float","atom","binary","list","tuple","map"],
+    "matlab": ["double","single","int8","int16","int32","int64","uint8","uint16","uint32",
+               "uint64","logical","char","string","cell","struct","table","datetime",
+               "duration","categorical"],
+    "objc": ["id","Class","SEL","IMP","BOOL","NSInteger","NSUInteger","CGFloat","NSString",
+             "NSObject","NSArray","NSDictionary","NSSet","NSNumber","instancetype","Method",
+             "Ivar","Protocol"],
 }
 
 CONSTANTS = {
@@ -171,6 +194,8 @@ CONSTANTS = {
     "sql": ["null","true","false"],
     "lua": ["true","false","nil"],
     "erlang": ["true","false"],
+    "objc": ["nil","Nil","YES","NO","NULL","self","super"],
+    "matlab": ["true","false","inf","Inf","NaN","pi","eps"],
 }
 
 BUILTINS = {
@@ -231,6 +256,9 @@ ALIASES = {
     "sql": ["sql"],
     "json": ["json"],
     "yaml": ["yaml","yml"],
+    "fortran": ["fortran","f90","f95","f03"],
+    "matlab": ["matlab","octave","m"],
+    "objc": ["objc","objective-c","objectivec","m"],
 }
 
 
@@ -570,6 +598,138 @@ EXTRA_LANGUAGES = {
                   "Rational","Vector","Matrix","Tuple","NamedTuple","Dict","Set"],
         "constants": ["true","false","nothing","missing","Inf","NaN"],
     },
+    "pascal": {
+        "aliases": ["pascal","delphi","pas","fpc"],
+        "keywords": ["absolute","abstract","alias","and","array","as","asm","assembler",
+                     "at","automated","begin","case","cdecl","class","const","constructor",
+                     "contains","default","deprecated","destructor","dispid","dispinterface",
+                     "div","do","downto","dynamic","else","end","except","export","exports",
+                     "external","far","file","finalization","finally","for","forward",
+                     "function","goto","if","implementation","implements","in","index",
+                     "inherited","initialization","inline","interface","is","label","library",
+                     "message","mod","near","nil","nodefault","not","object","of","on","or",
+                     "out","overload","override","packed","pascal","platform","private",
+                     "procedure","program","property","protected","public","published","raise",
+                     "read","readonly","record","register","reintroduce","repeat",
+                     "resourcestring","safecall","sealed","set","shl","shr","static","stdcall",
+                     "stored","strict","string","then","threadvar","to","try","type","unit",
+                     "until","uses","var","varargs","virtual","while","with","write",
+                     "writeonly","xor"],
+        "types": ["Integer","Cardinal","Boolean","Byte","Word","LongInt","Int64","Single",
+                  "Double","Extended","Currency","Char","WideChar","AnsiChar","ShortInt",
+                  "SmallInt","UInt64","NativeInt","NativeUInt","Real","Real48","Comp",
+                  "ShortString","AnsiString","WideString","UnicodeString","String","Pointer",
+                  "PChar","PWideChar","TObject","Variant","OleVariant","TDateTime"],
+        "constants": ["True","False","nil"],
+    },
+    "lisp": {
+        "aliases": ["lisp","commonlisp","cl","elisp","scheme","racket"],
+        "keywords": ["block","catch","eval-when","flet","function","go","if","labels","let",
+                     "let*","load-time-value","locally","macrolet","multiple-value-call",
+                     "multiple-value-prog1","progn","progv","quote","return-from","setq",
+                     "symbol-macrolet","tagbody","the","throw","unwind-protect","defun",
+                     "defmacro","defvar","defparameter","defconstant","defclass","defmethod",
+                     "defgeneric","defstruct","deftype","define-condition","declaim","declare",
+                     "defpackage","in-package","lambda","cond","when","unless","case","ecase",
+                     "ccase","typecase","etypecase","ctypecase","and","or","loop","do","do*",
+                     "dolist","dotimes","return","setf","psetf","push","pop","pushnew","incf",
+                     "decf","prog","prog1","prog2","handler-case","handler-bind","ignore-errors",
+                     "restart-case","multiple-value-bind","destructuring-bind","check-type",
+                     "with-open-file","with-slots","with-accessors"],
+        "types": ["t","nil","integer","fixnum","bignum","float","double-float","single-float",
+                  "rational","complex","character","string","symbol","cons","list","vector",
+                  "array","hash-table","function","stream","pathname","package"],
+        "constants": ["t","nil","pi"],
+        "builtins": ["car","cdr","caar","cadr","cddr","cons","list","append","length","reverse",
+                     "mapcar","mapc","reduce","remove","remove-if","find","position","count",
+                     "sort","format","print","prin1","princ","terpri","read","apply","funcall",
+                     "values","first","second","third","rest","last","member","assoc","elt",
+                     "aref","gethash","make-hash-table","error","assert","coerce","typecase",
+                     "zerop","evenp","oddp","abs","max","min","expt","sqrt","exp","log","sin",
+                     "cos","tan","char","char-code","code-char","string-upcase",
+                     "string-downcase","concatenate","subseq","search","substitute","copy-seq",
+                     "copy-list","every","some","intern","find-symbol","gensym","identity",
+                     "complement","eval","load","compile","open","close","warn","make-list",
+                     "make-array","vector","list-length","adjoin","union","intersection"],
+    },
+    "assembly": {
+        "aliases": ["asm","assembly","nasm","gas","x86","x86-64"],
+        "keywords": ["mov","movabs","lea","push","pop","add","sub","adc","sbb","mul","imul",
+                     "div","idiv","inc","dec","neg","cmp","test","and","or","xor","not","shl",
+                     "shr","sal","sar","rol","ror","jmp","je","jne","jz","jnz","jg","jge","jl",
+                     "jle","ja","jae","jb","jbe","call","ret","leave","enter","nop","hlt",
+                     "int","int3","syscall","sysenter","cpuid","rdtsc","xchg","movzx","movsx",
+                     "movsxd","cmove","cmovne","setz","setnz","cld","std","cli","sti","cdq",
+                     "cqo","rep","repe","repne","movs","stos","lods","scas","cmps","bt","bts",
+                     "btr","btc","bsf","bsr","bswap","popcnt","xadd","cmpxchg",
+                     "section","segment","global","extern","export","bits","org","align","db",
+                     "dw","dd","dq","resb","resw","resd","resq","equ","times","include","macro",
+                     "endmacro","struc","endstruc","label"],
+        "types": ["rax","rbx","rcx","rdx","rsi","rdi","rbp","rsp","r8","r9","r10","r11",
+                  "r12","r13","r14","r15","eax","ebx","ecx","edx","esi","edi","ebp","esp",
+                  "ax","bx","cx","dx","al","bl","cl","dl","ah","bh","ch","dh","rip","rflags",
+                  "eflags","cs","ds","es","fs","gs","ss","xmm0","xmm1","xmm2","ymm0","ymm1",
+                  "zmm0","mm0","cr0","cr3","dr0"],
+        "constants": [],
+    },
+    "ada": {
+        "aliases": ["ada","adb","ads"],
+        "keywords": ["abort","abs","abstract","accept","access","aliased","all","and","array",
+                     "at","begin","body","case","constant","declare","delay","delta","digits",
+                     "do","else","elsif","end","entry","exception","exit","for","function",
+                     "generic","goto","if","in","interface","is","limited","loop","mod","new",
+                     "not","null","of","or","others","out","overriding","package","pragma",
+                     "private","procedure","protected","raise","range","record","rem","renames",
+                     "requeue","return","reverse","select","separate","some","subtype",
+                     "synchronized","tagged","task","terminate","then","type","until","use",
+                     "when","while","with","xor"],
+        "types": ["Integer","Natural","Positive","Float","Long_Float","Boolean","Character",
+                  "String","Duration","Ada"],
+        "constants": ["True","False"],
+    },
+    "prolog": {
+        "aliases": ["prolog","plg"],
+        "keywords": ["is","mod","div","rem","not","fail","true","false","repeat","call",
+                     "catch","throw","once","forall","findall","bagof","setof","assert",
+                     "asserta","assertz","retract","retractall","clause","abolish","dynamic",
+                     "discontiguous","multifile","module","use_module","ensure_loaded",
+                     "include","initialization","op","meta_predicate","public","between","succ",
+                     "current_predicate","predicate_property","set_prolog_flag",
+                     "module_transparent","thread_local","volatile"],
+        "types": ["integer","float","rational","number","atom","string","atomic","variable",
+                  "var","compound","callable","list","boolean","character","stream","term"],
+        "constants": ["true","false","fail","nl","end_of_file"],
+    },
+    "fsharp": {
+        "aliases": ["fsharp","fs","fsx","f#"],
+        "keywords": ["abstract","and","as","assert","base","begin","class","default","delegate",
+                     "do","done","downcast","downto","elif","else","end","exception","extern",
+                     "false","finally","fixed","for","fun","function","global","if","in",
+                     "inherit","inline","interface","internal","lazy","let","match","member",
+                     "module","mutable","namespace","new","not","null","of","open","or",
+                     "override","private","public","rec","return","select","static","struct",
+                     "then","to","true","try","type","upcast","use","val","void","when","while",
+                     "with","yield"],
+        "types": ["int","int8","int16","int32","int64","uint8","uint16","uint32","uint64",
+                  "float","float32","double","decimal","bool","char","string","byte","sbyte",
+                  "unit","obj","list","array","seq","option","Result","Map","Set"],
+        "constants": ["true","false","None","Some","Ok","Error"],
+    },
+    "nim": {
+        "aliases": ["nim","nimble","nims"],
+        "keywords": ["addr","and","as","asm","bind","block","break","case","cast","concept",
+                     "const","continue","converter","defer","discard","distinct","div","do",
+                     "elif","else","end","enum","except","export","finally","for","from","func",
+                     "generic","if","import","in","include","interface","is","isnot","iterator",
+                     "let","macro","method","mixin","mod","nil","not","notin","object","of",
+                     "or","out","proc","ptr","raise","ref","return","shl","shr","static",
+                     "template","try","tuple","type","using","var","when","while","with","xor",
+                     "yield"],
+        "types": ["int","int8","int16","int32","int64","uint","uint8","uint16","uint32",
+                  "uint64","float","float32","float64","bool","char","string","cstring","seq",
+                  "array","set","tuple","object","ref","ptr","pointer","openArray","varargs"],
+        "constants": ["true","false","nil"],
+    },
 }
 
 
@@ -644,21 +804,42 @@ def build(upstream):
     }
 
 
+def load_upstream(src):
+    """Return the upstream README text.
+
+    Order: an explicit path/URL, then the network, then the committed snapshot.
+    A failure to fetch never empties the data - we fall back to the snapshot
+    and, if even that is missing, abort without touching the output file.
+    """
+    if src and not src.startswith("http"):
+        return open(src, encoding="utf-8").read()
+
+    url = src or DEFAULT_URL
+    try:
+        with urllib.request.urlopen(url, timeout=30) as r:
+            return r.read().decode("utf-8")
+    except Exception as e:  # network down, rate-limited, repo gone, ...
+        print(f"note: could not fetch {url} ({e}); using snapshot", file=sys.stderr)
+
+    if os.path.exists(SNAPSHOT):
+        return open(SNAPSHOT, encoding="utf-8").read()
+    raise SystemExit("error: no upstream source and no snapshot available")
+
+
 def main():
-    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
+    src = sys.argv[1] if len(sys.argv) > 1 else None
     out = sys.argv[2] if len(sys.argv) > 2 else "data/keywords.json"
-    if src.startswith("http"):
-        with urllib.request.urlopen(src, timeout=30) as r:
-            text = r.read().decode("utf-8")
-    else:
-        text = open(src, encoding="utf-8").read()
+    text = load_upstream(src)
     upstream = parse_upstream(text)
     data = build(upstream)
+
+    total = sum(len(v.get("keywords", [])) for v in data["languages"].values())
+    if not data["languages"] or total == 0:
+        raise SystemExit("error: parsed no languages; refusing to overwrite " + out)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
-    print(f"wrote {out}: {len(data['languages'])} profiles, "
-          f"{sum(len(v.get('keywords', [])) for v in data['languages'].values())} keywords")
+    print(f"wrote {out}: {len(data['languages'])} profiles, {total} keywords")
 
 
 if __name__ == "__main__":

@@ -180,15 +180,17 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
   def add(a, b):
       return a + b
   ```
-- syntax highlighting for C, C++, C#, Java, JavaScript/TypeScript (and
-  JSX/TSX/Vue/Svelte), Go, Rust, Python, Ruby, PHP, Perl, Kotlin, Swift, Scala,
-  Lua, R, Dart, Elixir, Erlang, Haskell, Clojure, Groovy, PowerShell, GDScript,
-  VB.NET, OCaml, Julia, Fortran, Zig, shell, SQL, HTML, CSS, JSON and YAML -
+- syntax highlighting for C, C++, C#, Objective-C, Java, JavaScript/TypeScript
+  (and JSX/TSX/Vue/Svelte), Go, Rust, Python, Ruby, PHP, Perl, Kotlin, Swift,
+  Scala, Lua, R, MATLAB, Dart, Elixir, Erlang, Haskell, Clojure, Groovy,
+  PowerShell, GDScript, VB.NET, Pascal/Delphi, Lisp, Assembly, Ada, Prolog,
+  F#, Nim, OCaml, Julia, Fortran, Zig, shell, SQL, HTML, CSS, JSON and YAML -
   driven by keyword data in [`data/keywords.json`](data/keywords.json),
   regenerated with `tools/gen_keyword_data.py`
 - ATX headings, unordered/ordered lists, blockquotes and thematic breaks
 - GFM-style tables with `+`/`-`/`|` borders and per-column alignment, including
-  syntax-highlighted code in cells (`python: ...`, or a fenced snippet)
+  syntax-highlighted code in cells: inline (`` `python: ...` ``) or a fenced
+  block that continues on the lines below
 - links rendered as `text (url)`
 
 Blocks are rendered as they stream: a fenced code block is highlighted from the
@@ -249,7 +251,8 @@ src/
   config.*        configuration model
   util.*          paths, IO, UTF-8 helpers
 data/
-  keywords.json   language keyword data (embedded at build time)
+  keywords.json         language keyword data (embedded at build time)
+  upstream-keywords.md  snapshot of the upstream keyword lists (offline regen)
 tools/
   gen_keywords.cpp    generates the embedded keyword header
   gen_keyword_data.py regenerates data/keywords.json from upstream
@@ -284,4 +287,8 @@ and avoid new third-party libraries unless there is a strong justification.
 The language keyword data in `data/keywords.json` is compiled from
 [languages-keywords](https://github.com/radosslav/languages-keywords)
 (MIT for source, CC-BY-4.0 for the compiled data), originally assembled by
-[@leighmcculloch](https://github.com/leighmcculloch) and contributors.
+[@leighmcculloch](https://github.com/leighmcculloch) and contributors. A
+snapshot of the upstream lists is kept in `data/upstream-keywords.md` so the
+data can be regenerated offline; the generated `data/keywords.json` is committed
+and embedded into the binary, so lumen never depends on the upstream project at
+build or run time.
