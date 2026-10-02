@@ -297,22 +297,24 @@ std::vector<nlohmann::json> Agent::build_messages() const {
 }
 
 void Agent::show_help() {
+    // Argument placeholders are uniformly bracketed ([NAME]) and every
+    // description starts at the same column, whatever the command length.
     ui_.append("Commands:", STYLE_BOLD);
-    ui_.append("/help                 Show this help");
-    ui_.append("/model [NAME]         List or select model");
-    ui_.append("/session              Show current session");
-    ui_.append("/session new [NAME]   New session");
-    ui_.append("/session list         List sessions");
-    ui_.append("/session load NAME    Load session");
-    ui_.append("/session rename A B   Rename");
-    ui_.append("/session delete NAME  Delete");
-    ui_.append("/cd PATH              Change directory");
-    ui_.append("/pwd                  Print directory");
-    ui_.append("/clear                Clear display");
-    ui_.append("/compact              Compact conversation");
-    ui_.append("/tools                List tools");
-    ui_.append("/config               Show config");
-    ui_.append("/quit                 Exit");
+    ui_.append("/help                             Show this help");
+    ui_.append("/model [NAME]                     List or select model");
+    ui_.append("/session                          Show current session");
+    ui_.append("/session new [NAME]               New session");
+    ui_.append("/session list                     List sessions");
+    ui_.append("/session load [NAME]              Load session");
+    ui_.append("/session rename [NAME] [NEWNAME]  Rename");
+    ui_.append("/session delete [NAME]            Delete");
+    ui_.append("/cd [PATH]                        Change directory");
+    ui_.append("/pwd                              Print directory");
+    ui_.append("/clear                            Clear display");
+    ui_.append("/compact                          Compact conversation");
+    ui_.append("/tools                            List tools");
+    ui_.append("/config                           Show config");
+    ui_.append("/quit                             Exit");
     ui_.append("");
     ui_.append("Keys: Ctrl-C interrupt, Ctrl-L model, Ctrl-N new, Ctrl-S save, Ctrl-Q quit");
     ui_.append("      PageUp/Down scroll, Up/Down history");
@@ -1086,8 +1088,10 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
         tool_msg.tool_call_id = id;
         tool_msg.name = name;
         session_.messages.push_back(tool_msg);
+        // Persist after every single tool response: an interrupt (or crash)
+        // mid-batch must never lose results that already came back.
+        save_session(false);
     }
-    save_session(false);  // tool results are persisted before the next round
 
     if (cancel_all_ || !running_ || Terminal::got_sigterm.load()) return;
 
