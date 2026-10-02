@@ -180,9 +180,11 @@ Off by default so the harness stays lightweight. Enable with `"markdown": true`:
   def add(a, b):
       return a + b
   ```
-- syntax highlighting for `python`, `bash`/`sh`, C-family (C/C++/Java/JS/TS/Go/
-  Rust), `json`, `yaml` and `sql`, driven by keyword data in
-  [`data/keywords.json`](data/keywords.json)
+- syntax highlighting for C, C++, C#, Java, JavaScript/TypeScript, Go, Rust,
+  Python, Ruby, PHP, Kotlin, Swift, Scala, Lua, R, Dart, Elixir, Erlang, shell,
+  SQL, JSON and YAML - driven by keyword data in
+  [`data/keywords.json`](data/keywords.json), regenerated from upstream with
+  `tools/gen_keyword_data.py`
 - ATX headings, unordered/ordered lists, blockquotes and thematic breaks
 - GFM-style tables with `+`/`-`/`|` borders and per-column alignment
 - links rendered as `text (url)`
@@ -237,6 +239,7 @@ src/
   tools.*         file/shell tools
   ui.*            terminal UI (scrollback, status, input, Markdown mapping)
   markdown.*      self-contained Markdown parser and renderer
+  keywords.*      loads the embedded language keyword data
   terminal.*      raw TTY control
   input.*         key/escape-sequence decoding
   completion.hpp  slash-command / argument completion
@@ -245,7 +248,8 @@ src/
 data/
   keywords.json   language keyword data (embedded at build time)
 tools/
-  gen_keywords.cpp  generates the embedded keyword header
+  gen_keywords.cpp    generates the embedded keyword header
+  gen_keyword_data.py regenerates data/keywords.json from upstream
 ```
 
 ## Testing on a real TTY

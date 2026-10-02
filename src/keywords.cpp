@@ -19,13 +19,19 @@ std::vector<std::string> json_strings(const nlohmann::json& j) {
     return out;
 }
 
-// Comment markers and lexer flags are not keyword data, so they stay here.
-void apply_syntax(const std::string& name, LangProfile& p) {
-    if (name == "python") { p.line_comment = "#"; p.python_like = true; }
-    else if (name == "bash") { p.line_comment = "#"; p.python_like = true; }
-    else if (name == "clike") { p.line_comment = "//"; p.block_comment = true; }
-    else if (name == "yaml") { p.line_comment = "#"; p.python_like = true; }
-    else if (name == "sql") { p.line_comment = "--"; p.block_comment = true; p.case_insensitive = true; }
+// Comment markers and lexer flags come from the data's optional "syntax"
+// object, so adding a language never needs a code change.
+void apply_syntax(const nlohmann::json& v, LangProfile& p) {
+    if (!v.contains("syntax") || !v["syntax"].is_object()) return;
+    const auto& s = v["syntax"];
+    if (s.contains("line_comment") && s["line_comment"].is_string())
+        p.line_comment = s["line_comment"].get<std::string>();
+    if (s.contains("block_comment") && s["block_comment"].is_boolean())
+        p.block_comment = s["block_comment"].get<bool>();
+    if (s.contains("case_insensitive") && s["case_insensitive"].is_boolean())
+        p.case_insensitive = s["case_insensitive"].get<bool>();
+    if (s.contains("hash") && s["hash"].is_boolean())
+        p.python_like = s["hash"].get<bool>();
 }
 
 const std::map<std::string, LangProfile>& profiles() {
@@ -50,7 +56,7 @@ const std::map<std::string, LangProfile>& profiles() {
                 p.types = json_strings(v.value("types", nlohmann::json::array()));
                 p.constants = json_strings(v.value("constants", nlohmann::json::array()));
                 p.builtins = json_strings(v.value("builtins", nlohmann::json::array()));
-                apply_syntax(name, p);
+                apply_syntax(v, p);
 
                 t[name] = p;
                 // Register every alias pointing at the same profile.
