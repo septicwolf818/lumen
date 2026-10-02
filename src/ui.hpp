@@ -51,8 +51,9 @@ public:
     void append(const std::string& text, int style = 0);
     void append_raw(const std::string& text);  // no wrap, as-is
 
-    // Streaming: append tokens to the last "open" assistant line
-    void begin_stream();
+    // Streaming: append tokens to the last "open" assistant line.
+    // style applies to the whole streamed block (STYLE_DIM for thinking).
+    void begin_stream(int style = 0);
     void stream_token(const std::string& tok);
     void end_stream();
 
@@ -113,6 +114,7 @@ private:
     int history_idx_ = -1;
     std::string history_stash_;
     bool streaming_ = false;
+    int stream_style_ = 0;
     std::string stream_acc_;
     std::string last_message_;
     size_t queue_count_ = 0;

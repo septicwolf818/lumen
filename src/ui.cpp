@@ -117,10 +117,11 @@ void UI::append_raw(const std::string& text) {
     append(text, 0);
 }
 
-void UI::begin_stream() {
+void UI::begin_stream(int style) {
     streaming_ = true;
+    stream_style_ = style;
     stream_acc_.clear();
-    lines_.push_back({"", 0});
+    lines_.push_back({"", style});
 }
 
 void UI::stream_token(const std::string& tok) {
@@ -155,8 +156,8 @@ void UI::stream_token(const std::string& tok) {
         }
     }
     while (lines_.size() > stream_base) lines_.pop_back();
-    for (auto& w : wrapped) lines_.push_back({w, 0});
-    if (lines_.empty()) lines_.push_back({"", 0});
+    for (auto& w : wrapped) lines_.push_back({w, stream_style_});
+    if (lines_.empty()) lines_.push_back({"", stream_style_});
 
     if (scroll_offset_ == 0) {
         // will redraw at bottom

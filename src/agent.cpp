@@ -56,7 +56,11 @@ void Agent::update_status() {
 
 size_t Agent::sent_chars() const {
     size_t n = 0;
-    for (const auto& m : session_.messages) n += m.to_json().dump().size();
+    for (const auto& m : session_.messages) {
+        auto j = m.to_json();
+        j.erase("thinking");  // display-only: never sent back to the model
+        n += j.dump().size();
+    }
     return n;
 }
 
@@ -182,7 +186,14 @@ void Agent::replay_message(const Message& m) {
         }
     } else if (m.role == Role::Assistant) {
         ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);
-        if (!m.content.empty()) ui_.append(m.content);
+        bool has_content = !m.content.empty();
+        bool has_tools = m.tool_calls.is_array() && !m.tool_calls.empty();
+        if (!m.thinking.empty()) {
+            // Thinking models: reasoning rendered dim, exactly as it streamed.
+            ui_.append(m.thinking, STYLE_DIM);
+            if (has_content || has_tools) ui_.append("");
+        }
+        if (has_content) ui_.append(m.content);
         if (m.tool_calls.is_array()) {
             for (const auto& tc : m.tool_calls) {
                 std::string name = "tool";
@@ -204,7 +215,11 @@ void Agent::replay_message(const Message& m) {
 std::vector<nlohmann::json> Agent::build_messages() const {
     std::vector<nlohmann::json> out;
     for (const auto& m : session_.messages) {
-        out.push_back(m.to_json());
+        auto j = m.to_json();
+        // Saved for display on session reopen, but not resent: the model
+        // re-reasons each turn and thinking would only bloat the context.
+        j.erase("thinking");
+        out.push_back(std::move(j));
     }
     return out;
 }
@@ -444,18 +459,24 @@ void Agent::handle_tab() {
     if (t.matches.size() == 1) {
         tab_cycle_ = TabCycle{};
         bool at_end = (t.end == in.size());
-        replace_token(ui_, t.start, t.end, t.matches[0] + (at_end ? " " : ""));
+        // Directory completions end in '/' so the next segment can follow;
+        // everything else terminates the token with a space.
+        bool opens_dir = t.matches[0].back() == '/';
+        replace_token(ui_, t.start, t.end, t.matches[0] + (at_end && !opens_dir ? " " : ""));
         return;
     }
 
     std::string common = completion::common_prefix(t.matches);
     tab_cycle_.active = true;
     tab_cycle_.start = t.start;
-    tab_cycle_.token = common;
+    // Path candidates can share no prefix ("/cd /home/" -> bin, etc, ...):
+    // anchor cycling on the typed word instead of an empty common prefix,
+    // and never replace the token with an empty string.
+    tab_cycle_.token = common.empty() ? word : common;
     tab_cycle_.matches = t.matches;
     tab_cycle_.idx = 0;
     tab_cycle_.started = false;
-    replace_token(ui_, t.start, t.end, common);
+    if (!common.empty()) replace_token(ui_, t.start, t.end, common);
 
     std::string list;
     for (size_t i = 0; i < t.matches.size(); ++i) {
@@ -532,10 +553,32 @@ void Agent::do_compact(bool automatic) {
         {{"role", "user"}, {"content", prompt.str()}}};
     nlohmann::json final_msg;
     std::string err;
-    ui_.begin_stream();
+    // Same two-phase display as run_generation: thinking models open a dim
+    // block first, plain models stream the summary in the normal style.
+    int phase = 0;
     bool ok = ollama_->chat_stream(
         cfg_.model, msgs, nlohmann::json::array(),
-        [this](const std::string& tok) {
+        [this, &phase](const std::string& tok) {
+            if (phase == 1) {  // thinking block open: close it, then summary
+                ui_.end_stream();
+                ui_.append("");
+                ui_.begin_stream();
+            } else if (phase == 0) {
+                ui_.begin_stream();
+            }
+            phase = 2;
+            ui_.stream_token(tok);
+            static uint64_t last = 0;
+            uint64_t now = util::steady_ms();
+            if (now - last > 80) {
+                ui_.redraw();
+                last = now;
+            }
+        },
+        [this, &phase](const std::string& tok) {
+            if (phase == 2) return;  // summary already started
+            if (phase == 0) ui_.begin_stream(STYLE_DIM);
+            phase = 1;
             ui_.stream_token(tok);
             static uint64_t last = 0;
             uint64_t now = util::steady_ms();
@@ -769,26 +812,47 @@ void Agent::run_generation() {
         return abort_gen_.load();
     };
 
-    ui_.begin_stream();
-    ui_.redraw();
-
     nlohmann::json final_msg;
     std::string err;
     OllamaUsage usage;
     auto messages = build_messages();
+
+    // Streaming display phase: 0 = nothing yet, 1 = thinking block (dim),
+    // 2 = content block (normal). Thinking models open the dim block on the
+    // first reasoning token; models that never think stream normally from
+    // the first content token.
+    int phase = 0;
+    auto maybe_redraw = [this]() {
+        static uint64_t last = 0;
+        uint64_t now = util::steady_ms();
+        if (now - last > 80) {
+            ui_.redraw();
+            last = now;
+        }
+    };
+    ui_.redraw();  // "Agent:" header reaches the screen before the first token
     bool ok = ollama_->chat_stream(
         cfg_.model,
         messages,
         tool_definitions(),
-        [this](const std::string& tok) {
-            ui_.stream_token(tok);
-            // redraw occasionally to keep responsive without thrashing Pi CPU
-            static uint64_t last = 0;
-            uint64_t now = util::steady_ms();
-            if (now - last > 80) {
-                ui_.redraw();
-                last = now;
+        [this, &phase, &maybe_redraw](const std::string& tok) {
+            if (phase == 1) {  // thinking block open: close it, then content
+                ui_.end_stream();
+                ui_.append("");
+                ui_.begin_stream();
+            } else if (phase == 0) {
+                ui_.begin_stream();
             }
+            phase = 2;
+            ui_.stream_token(tok);
+            maybe_redraw();
+        },
+        [this, &phase, &maybe_redraw](const std::string& tok) {
+            if (phase == 2) return;  // content already started: drop late thinking
+            if (phase == 0) ui_.begin_stream(STYLE_DIM);
+            phase = 1;
+            ui_.stream_token(tok);
+            maybe_redraw();
         },
         nullptr,  // tool calls collected in final_msg
         should_abort,
@@ -832,6 +896,8 @@ void Agent::run_generation() {
     asst.role = Role::Assistant;
     if (final_msg.contains("content") && final_msg["content"].is_string())
         asst.content = final_msg["content"].get<std::string>();
+    if (final_msg.contains("thinking") && final_msg["thinking"].is_string())
+        asst.thinking = final_msg["thinking"].get<std::string>();
     if (final_msg.contains("tool_calls"))
         asst.tool_calls = final_msg["tool_calls"];
     session_.messages.push_back(asst);

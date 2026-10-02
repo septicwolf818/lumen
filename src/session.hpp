@@ -10,6 +10,7 @@ enum class Role { System, User, Assistant, Tool };
 struct Message {
     Role role = Role::User;
     std::string content;
+    std::string thinking;         // reasoning of thinking models (display only)
     std::string name;           // for tool results
     std::string tool_call_id;   // optional
     // For assistant messages that contain tool calls

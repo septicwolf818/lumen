@@ -17,10 +17,12 @@ size_t OllamaClient::write_cb(char* ptr, size_t size, size_t nmemb, void* userda
 struct StreamCtx {
     std::string buffer;  // leftover incomplete lines
     std::function<void(const std::string&)> on_token;
+    std::function<void(const std::string&)> on_thinking;
     std::function<void(const nlohmann::json&)> on_tool_call;
     std::function<bool()> should_abort;
     nlohmann::json* final_msg = nullptr;
     std::string content_acc;
+    std::string thinking_acc;
     nlohmann::json tool_calls = nlohmann::json::array();
     bool aborted = false;
     std::string error;
@@ -60,6 +62,13 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                     if (!tok.empty()) {
                         ctx->content_acc += tok;
                         if (ctx->on_token) ctx->on_token(tok);
+                    }
+                }
+                if (msg.contains("thinking") && msg["thinking"].is_string()) {
+                    std::string tok = msg["thinking"].get<std::string>();
+                    if (!tok.empty()) {
+                        ctx->thinking_acc += tok;
+                        if (ctx->on_thinking) ctx->on_thinking(tok);
                     }
                 }
                 if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
@@ -106,6 +115,8 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                         {"role", "assistant"},
                         {"content", ctx->content_acc}
                     };
+                    if (!ctx->thinking_acc.empty())
+                        (*ctx->final_msg)["thinking"] = ctx->thinking_acc;
                     if (!ctx->tool_calls.empty()) {
                         // only include complete tool calls
                         nlohmann::json cleaned = nlohmann::json::array();
@@ -229,6 +240,7 @@ bool OllamaClient::chat_stream(
     const std::vector<nlohmann::json>& messages,
     const nlohmann::json& tools,
     std::function<void(const std::string& token)> on_token,
+    std::function<void(const std::string& token)> on_thinking,
     std::function<void(const nlohmann::json& tool_call)> on_tool_call,
     std::function<bool()> should_abort,
     std::string* err,
@@ -254,6 +266,7 @@ bool OllamaClient::chat_stream(
 
     StreamCtx ctx;
     ctx.on_token = std::move(on_token);
+    ctx.on_thinking = std::move(on_thinking);
     ctx.on_tool_call = std::move(on_tool_call);
     ctx.should_abort = std::move(should_abort);
     ctx.final_msg = final_message;
@@ -326,6 +339,8 @@ bool OllamaClient::chat_stream(
                 {"role", "assistant"},
                 {"content", ctx.content_acc}
             };
+            if (!ctx.thinking_acc.empty())
+                (*final_message)["thinking"] = ctx.thinking_acc;
         }
         return true;  // partial success
     }

@@ -27,6 +27,7 @@ nlohmann::json Message::to_json() const {
     j["role"] = role_to_str(role);
     // nlohmann::json throws type_error.316 on invalid UTF-8 — always sanitize
     j["content"] = util::sanitize_utf8(content);
+    if (!thinking.empty()) j["thinking"] = util::sanitize_utf8(thinking);
     if (!name.empty()) j["name"] = util::sanitize_utf8(name);
     if (!tool_call_id.empty()) j["tool_call_id"] = util::sanitize_utf8(tool_call_id);
     if (!tool_calls.is_null() && !tool_calls.empty()) j["tool_calls"] = tool_calls;
@@ -40,6 +41,8 @@ Message Message::from_json(const nlohmann::json& j) {
         m.content = j["content"].get<std::string>();
     else if (j.contains("content") && j["content"].is_null())
         m.content = "";
+    if (j.contains("thinking") && j["thinking"].is_string())
+        m.thinking = j["thinking"].get<std::string>();
     if (j.contains("name") && j["name"].is_string())
         m.name = j["name"].get<std::string>();
     if (j.contains("tool_call_id") && j["tool_call_id"].is_string())

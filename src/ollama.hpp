@@ -31,6 +31,8 @@ public:
     std::optional<std::vector<OllamaModel>> list_models(std::string* err = nullptr);
 
     // Streaming chat. on_token called for each content delta.
+    // on_thinking called for each reasoning delta (thinking models only;
+    // plain models simply never call it).
     // on_tool_call called when a tool call is complete (name, args_json, id).
     // Returns true on success (may be interrupted).
     // messages are in Ollama format.
@@ -40,6 +42,7 @@ public:
         const std::vector<nlohmann::json>& messages,
         const nlohmann::json& tools,  // array of tool defs, or null
         std::function<void(const std::string& token)> on_token,
+        std::function<void(const std::string& token)> on_thinking,
         std::function<void(const nlohmann::json& tool_call)> on_tool_call,
         std::function<bool()> should_abort,  // return true to abort
         std::string* err = nullptr,
