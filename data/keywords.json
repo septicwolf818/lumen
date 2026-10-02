@@ -1,0 +1,47 @@
+{
+  "_comment": "Keyword data for syntax highlighting. Compiled from the MIT-licensed list in https://github.com/radosslav/languages-keywords (compiled data CC-BY-4.0, attribution: @leighmcculloch and contributors). Types, builtins and constants that are not language keywords are maintained here as well.",
+  "version": 1,
+  "languages": {
+    "python": {
+      "aliases": ["py", "python3"],
+      "keywords": ["False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield", "match", "case"],
+      "types": ["int", "float", "str", "bool", "bytes", "list", "dict", "set", "tuple", "object", "complex", "frozenset", "bytearray"],
+      "constants": ["None", "True", "False", "self", "cls", "NotImplemented", "Ellipsis", "__name__"],
+      "builtins": ["print", "len", "range", "enumerate", "zip", "map", "filter", "sum", "min", "max", "abs", "open", "isinstance", "input", "sorted", "reversed", "type", "super", "getattr", "setattr", "hasattr", "format", "repr", "iter", "next", "id", "hash", "vars", "dir", "any", "all", "round", "divmod", "pow"]
+    },
+    "bash": {
+      "aliases": ["sh", "shell", "zsh"],
+      "keywords": ["if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "function", "in", "select", "time", "return", "exit", "set", "unset", "local", "readonly", "export", "declare", "source", "shift", "trap"],
+      "constants": ["true", "false"],
+      "builtins": ["echo", "printf", "read", "cd", "pwd", "test", "exit", "export", "unset", "set", "shift", "eval", "exec", "source", "trap", "wait", "kill", "sleep", "cat", "grep", "sed", "awk", "find", "ls", "mkdir", "rm", "cp", "mv", "chmod", "curl", "wget", "head", "tail", "sort", "uniq", "wc", "cut", "tr", "xargs", "tee", "which", "env", "date"]
+    },
+    "clike": {
+      "aliases": ["c", "h", "cpp", "c++", "cc", "cxx", "hpp", "hxx", "java", "js", "javascript", "ts", "typescript", "go", "rust", "rs", "cs", "csharp"],
+      "keywords": ["alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor", "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t", "class", "compl", "concept", "const", "consteval", "constexpr", "constinit", "const_cast", "continue", "co_await", "co_return", "co_yield", "decltype", "default", "delete", "do", "double", "dynamic_cast", "else", "enum", "explicit", "export", "extern", "false", "final", "float", "for", "friend", "goto", "if", "inline", "int", "long", "mutable", "namespace", "new", "noexcept", "not", "not_eq", "nullptr", "operator", "or", "or_eq", "override", "private", "protected", "public", "register", "reinterpret_cast", "requires", "return", "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct", "switch", "template", "this", "thread_local", "throw", "true", "try", "typedef", "typeid", "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq", "abstract", "assert", "boolean", "byte", "extends", "implements", "import", "instanceof", "interface", "native", "package", "strictfp", "super", "synchronized", "throws", "transient", "var", "let", "function", "typeof", "instanceof", "yield", "async", "await", "of", "chan", "defer", "fallthrough", "func", "go", "map", "range", "select", "type", "crate", "dyn", "impl", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "self", "Self", "static", "trait", "unsafe", "use", "where", "namespace", "internal", "sealed", "record", "readonly", "params", "event", "delegate", "lock", "unchecked", "unsafe", "fixed", "foreach", "in", "out", "ref", "base", "is", "as", "checked"],
+      "types": ["void", "bool", "char", "short", "int", "long", "float", "double", "signed", "unsigned", "size_t", "ssize_t", "wchar_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t", "string", "String", "boolean", "byte", "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128", "usize", "isize", "f32", "f64", "object", "decimal", "uint", "ulong", "ushort", "sbyte", "runerror"],
+      "constants": ["true", "false", "null", "nullptr", "NULL", "None", "nil", "undefined", "NaN", "Infinity", "self", "this", "super"],
+      "builtins": []
+    },
+    "json": {
+      "aliases": [],
+      "keywords": [],
+      "types": [],
+      "constants": ["true", "false", "null"],
+      "builtins": []
+    },
+    "yaml": {
+      "aliases": ["yml"],
+      "keywords": [],
+      "types": [],
+      "constants": ["true", "false", "null", "yes", "no", "on", "off"],
+      "builtins": []
+    },
+    "sql": {
+      "aliases": [],
+      "keywords": ["select", "from", "where", "and", "or", "not", "insert", "into", "values", "update", "set", "delete", "create", "table", "drop", "alter", "join", "inner", "left", "right", "outer", "full", "cross", "on", "group", "by", "order", "having", "limit", "offset", "union", "all", "distinct", "as", "null", "like", "in", "exists", "between", "primary", "key", "foreign", "references", "index", "returning", "case", "when", "then", "else", "end", "asc", "desc", "with"],
+      "types": ["int", "integer", "bigint", "smallint", "text", "varchar", "char", "boolean", "bool", "date", "time", "timestamp", "timestamptz", "numeric", "decimal", "real", "double", "serial", "bigserial", "uuid", "json", "jsonb", "bytea", "array"],
+      "constants": ["null", "true", "false"],
+      "builtins": ["count", "sum", "avg", "min", "max", "coalesce", "now", "lower", "upper", "length", "substring", "trim", "cast", "greatest", "least"]
+    }
+  }
+}

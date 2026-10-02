@@ -1,8 +1,14 @@
 #include "markdown.hpp"
 
+#include "json.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <map>
+#include <string>
+
+#include "keywords_data.inc"  // generated: kKeywordsJson
 
 namespace md {
 namespace {
@@ -721,75 +727,71 @@ struct LangProfile {
     bool python_like = false;             // '#': preprocessor/decorator
 };
 
+// Comment/flag metadata that is not part of the language keyword data.
+struct LangSyntax {
+    std::string line_comment;
+    bool block_comment;
+    bool case_insensitive;
+    bool python_like;
+};
+
+std::vector<std::string> json_strings(const nlohmann::json& j) {
+    std::vector<std::string> out;
+    if (j.is_array())
+        for (const auto& e : j)
+            if (e.is_string()) out.push_back(e.get<std::string>());
+    return out;
+}
+
+// Language profile tables are built once from the embedded keyword data
+// (data/keywords.json). Lexer syntax rules - comment markers and the C-style
+// block comment - stay here because they are not keyword data.
+const std::map<std::string, LangProfile>& profiles() {
+    static const std::map<std::string, LangProfile> table = [] {
+        std::map<std::string, LangProfile> t;
+        nlohmann::json j = nlohmann::json::parse(kKeywordsJson, nullptr, false);
+        if (j.is_discarded() || !j.contains("languages")) return t;
+
+        auto syntax_for = [](const std::string& name) -> LangSyntax {
+            if (name == "python") return {"#", false, false, true};
+            if (name == "bash") return {"#", false, false, true};
+            if (name == "clike") return {"//", true, false, false};
+            if (name == "yaml") return {"#", false, false, true};
+            if (name == "sql") return {"--", true, true, false};
+            return {"", false, false, false};  // json
+        };
+
+        for (auto it = j["languages"].begin(); it != j["languages"].end(); ++it) {
+            const std::string& name = it.key();
+            const nlohmann::json& v = it.value();
+
+            LangProfile p;
+            p.keywords = json_strings(v.value("keywords", nlohmann::json::array()));
+            p.types = json_strings(v.value("types", nlohmann::json::array()));
+            p.constants = json_strings(v.value("constants", nlohmann::json::array()));
+            p.builtins = json_strings(v.value("builtins", nlohmann::json::array()));
+            LangSyntax s = syntax_for(name);
+            p.line_comment = s.line_comment;
+            p.block_comment = s.block_comment;
+            p.case_insensitive = s.case_insensitive;
+            p.python_like = s.python_like;
+
+            t[name] = p;
+            // Register every alias pointing at the same profile.
+            for (const auto& a : json_strings(v.value("aliases", nlohmann::json::array())))
+                t[a] = p;
+        }
+        return t;
+    }();
+    return table;
+}
+
 const LangProfile* lang_profile(const std::string& raw) {
     std::string l = raw;
     for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-
-    static const LangProfile py = {
-        {"def", "class", "return", "if", "elif", "else", "for", "while", "import", "from",
-         "as", "try", "except", "finally", "with", "lambda", "yield", "and", "or", "not",
-         "in", "is", "pass", "break", "continue", "global", "nonlocal", "raise", "assert",
-         "async", "await", "del", "match", "case"},
-        {"int", "float", "str", "bool", "bytes", "list", "dict", "set", "tuple", "object"},
-        {"None", "True", "False", "self", "cls", "NotImplemented", "Ellipsis"},
-        {"print", "len", "range", "enumerate", "zip", "map", "filter", "sum", "min", "max",
-         "abs", "open", "isinstance", "input", "sorted", "reversed", "type", "str", "int",
-         "float", "list", "dict", "set", "tuple", "super", "getattr", "setattr", "format"},
-        "#", false, false, true};
-    static const LangProfile sh = {
-        {"if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
-         "esac", "function", "in", "select", "time", "return", "exit", "set", "unset",
-         "read", "local", "readonly", "export", "source", "shift", "trap", "declare"},
-        {},
-        {"true", "false"},
-        {"echo", "printf", "read", "cd", "pwd", "test", "exit", "export", "unset", "set",
-         "shift", "eval", "exec", "source", "trap", "wait", "kill", "sleep", "cat", "grep",
-         "sed", "awk", "find", "ls", "mkdir", "rm", "cp", "mv", "chmod", "curl", "wget"},
-        "#", false, false, true};
-    static const LangProfile clike = {
-        {"if", "else", "for", "while", "do", "switch", "case", "default", "break", "continue",
-         "return", "function", "var", "let", "const", "new", "delete", "typeof", "instanceof",
-         "in", "of", "class", "extends", "import", "export", "from", "as", "try", "catch",
-         "finally", "throw", "void", "this", "super", "static", "public", "private",
-         "protected", "namespace", "using", "template", "typename", "auto", "package", "func",
-         "defer", "go", "chan", "map", "range", "fn", "mut", "impl", "trait", "pub", "use",
-         "match", "mod", "where", "async", "await", "extern", "sizeof", "typedef", "struct",
-         "enum", "union", "operator", "friend", "inline", "virtual", "override", "final",
-         "explicit", "mutable", "noexcept", "nullptr_t", "interface", "record", "sealed"},
-        {"int", "long", "short", "unsigned", "signed", "float", "double", "char", "bool",
-         "void", "size_t", "ssize_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t",
-         "int16_t", "int32_t", "int64_t", "string", "wchar_t", "byte", "rune", "u8", "u16",
-         "u32", "u64", "i8", "i16", "i32", "i64", "usize", "isize", "f32", "f64"},
-        {"true", "false", "null", "nullptr", "NULL", "None"},
-        {},
-        "//", true, false, false};
-    static const LangProfile json = {
-        {}, {}, {"true", "false", "null"}, {}, "", false, false, false};
-    static const LangProfile yaml = {
-        {}, {}, {"true", "false", "null", "yes", "no", "on", "off"}, {}, "#", false, false, true};
-    static const LangProfile sql = {
-        {"select", "from", "where", "and", "or", "not", "insert", "into", "values", "update",
-         "set", "delete", "create", "table", "drop", "alter", "join", "inner", "left", "right",
-         "outer", "on", "group", "by", "order", "having", "limit", "offset", "union", "all",
-         "distinct", "as", "null", "like", "in", "exists", "between", "primary", "key",
-         "foreign", "references", "index", "returning", "case", "when", "then", "else", "end"},
-        {"int", "integer", "bigint", "smallint", "text", "varchar", "char", "boolean", "bool",
-         "date", "timestamp", "timestamptz", "numeric", "decimal", "real", "double", "serial",
-         "uuid", "jsonb", "json", "bytea"},
-        {"null", "true", "false"},
-        {"count", "sum", "avg", "min", "max", "coalesce", "now", "lower", "upper", "length"},
-        "--", true, true, false};
-
-    if (l == "python" || l == "py" || l == "python3") return &py;
-    if (l == "bash" || l == "sh" || l == "shell" || l == "zsh") return &sh;
-    if (l == "js" || l == "javascript" || l == "ts" || l == "typescript" || l == "c" ||
-        l == "h" || l == "cpp" || l == "c++" || l == "cc" || l == "cxx" || l == "hpp" ||
-        l == "java" || l == "go" || l == "rust" || l == "rs" || l == "cs" || l == "csharp")
-        return &clike;
-    if (l == "json") return &json;
-    if (l == "yaml" || l == "yml") return &yaml;
-    if (l == "sql") return &sql;
-    return nullptr;
+    const auto& t = profiles();
+    auto it = t.find(l);
+    return it == t.end() ? nullptr : &it->second;
 }
 
 bool ident_char(char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }

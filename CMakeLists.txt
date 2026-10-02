@@ -12,6 +12,18 @@ find_package(Threads REQUIRED)
 add_library(nlohmann_json INTERFACE)
 target_include_directories(nlohmann_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Embed the language keyword data (data/keywords.json) into the binary via a
+# generated include, so the installed executable is self-contained.
+add_executable(gen_keywords tools/gen_keywords.cpp)
+set(KEYWORDS_INC ${CMAKE_CURRENT_BINARY_DIR}/keywords_data.inc)
+add_custom_command(
+    OUTPUT ${KEYWORDS_INC}
+    COMMAND gen_keywords ${CMAKE_CURRENT_SOURCE_DIR}/data/keywords.json ${KEYWORDS_INC}
+    DEPENDS gen_keywords ${CMAKE_CURRENT_SOURCE_DIR}/data/keywords.json
+    COMMENT "Embedding language keyword data"
+)
+add_custom_target(keywords_data DEPENDS ${KEYWORDS_INC})
+
 add_executable(lumen
     src/main.cpp
     src/terminal.cpp
@@ -25,10 +37,12 @@ add_executable(lumen
     src/agent.cpp
     src/util.cpp
 )
+add_dependencies(lumen keywords_data)
 
 target_include_directories(lumen PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(lumen PRIVATE
