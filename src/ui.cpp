@@ -175,14 +175,21 @@ int map_md_style(int st, bool dim = false) {
     // instead of reverse video, and only the uncoloured text is dimmed.
     if (dim) {
         r &= ~STYLE_REVERSE;
-        const int colored = STYLE_RED | STYLE_GREEN | STYLE_YELLOW | STYLE_BLUE |
-                            STYLE_MAGENTA | STYLE_CYAN;
-        if (r & colored)
-            r &= ~(STYLE_BOLD | STYLE_DIM);
-        else if (st & md::CODE)
-            r = STYLE_CYAN;
-        else
-            r |= STYLE_DIM;
+        if (st & md::HEADING) {
+            // Headings keep their emphasis without the cyan tint: cyan is
+            // reserved for inline code here, and a cyan heading reads oddly
+            // in the recessed thinking block.
+            r = STYLE_DIM;
+        } else {
+            const int colored = STYLE_RED | STYLE_GREEN | STYLE_YELLOW |
+                                STYLE_BLUE | STYLE_MAGENTA | STYLE_CYAN;
+            if (r & colored)
+                r &= ~(STYLE_BOLD | STYLE_DIM);
+            else if (st & md::CODE)
+                r = STYLE_CYAN;
+            else
+                r |= STYLE_DIM;
+        }
     }
     return r;
 }
