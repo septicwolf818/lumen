@@ -169,11 +169,10 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
 
     // Thinking: keep the full syntax highlight but make it read as recessed.
-    // SGR 2 cannot be used here: on the Linux console faint overrides the
-    // foreground colour (everything turns grey), so instead drop bold from
-    // coloured tokens - that shifts them from bright to normal colours - and
-    // dim the rest. Inline-code keeps its slot as dim cyan instead of reverse
-    // video, whose filled background reads poorly under the recessed treatment.
+    // SGR 2 cannot be combined with a colour on the Linux console: faint
+    // overrides the foreground and everything turns grey. So coloured tokens
+    // lose bold (bright -> normal colours), inline code becomes plain cyan
+    // instead of reverse video, and only the uncoloured text is dimmed.
     if (dim) {
         r &= ~STYLE_REVERSE;
         const int colored = STYLE_RED | STYLE_GREEN | STYLE_YELLOW | STYLE_BLUE |
@@ -181,7 +180,7 @@ int map_md_style(int st, bool dim = false) {
         if (r & colored)
             r &= ~(STYLE_BOLD | STYLE_DIM);
         else if (st & md::CODE)
-            r |= STYLE_DIM | STYLE_CYAN;
+            r = STYLE_CYAN;
         else
             r |= STYLE_DIM;
     }
