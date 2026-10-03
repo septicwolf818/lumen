@@ -1268,6 +1268,12 @@ int Agent::run() {
             ui_.redraw();
         }
 
+        // A background pass (title naming, compaction) keeps pumping the input
+        // line, so a message typed during one is queued with no flush left to
+        // send it. Drain before the next key, or a later prompt overtakes it.
+        if (!queue_.empty()) flush_queue();
+        if (!running_ || Terminal::got_sigterm.load()) break;
+
         ui_.tick_marquee();
 
         auto ev = input_.read(100);
