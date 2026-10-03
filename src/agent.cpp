@@ -916,12 +916,6 @@ void Agent::do_compact(bool automatic) {
         }
     }
 
-    while (running_ && !pending_cmds_.empty()) {  // run queued slash commands
-        std::string cmd = std::move(pending_cmds_.front());
-        pending_cmds_.pop_front();
-        cancel_all_ = false;
-        handle_command(cmd);
-    }
     ui_.redraw();
 }
 
@@ -953,8 +947,12 @@ void Agent::run_turn(const std::string& text) {
     if (text.empty()) return;
     if (cfg_.model.empty()) {
         ui_.message("No model selected. Use /model", STYLE_YELLOW);
-        if (!select_model_interactive()) return;
-        if (cfg_.model.empty()) return;
+        // The caller may have popped this text off the queue already, so say
+        // it was dropped instead of letting it vanish without a trace.
+        if (!select_model_interactive() || cfg_.model.empty()) {
+            ui_.message("Message not sent: no model selected", STYLE_YELLOW);
+            return;
+        }
     }
     cancel_all_ = false;
 
@@ -976,13 +974,6 @@ void Agent::run_turn(const std::string& text) {
     save_session(false);  // keep the user message even if we crash mid-response
 
     run_generation();
-
-    while (running_ && !pending_cmds_.empty()) {  // run queued slash commands now
-        std::string cmd = std::move(pending_cmds_.front());
-        pending_cmds_.pop_front();
-        handle_command(cmd);
-        ui_.redraw();
-    }
 }
 
 void Agent::handle_prompt(const std::string& text) {
@@ -994,10 +985,11 @@ void Agent::handle_prompt(const std::string& text) {
     if (running_ && !generating_) maybe_generate_title();
 }
 
-// Send queued messages FIFO, batching consecutive plain messages into one
-// combined turn; a queued slash command runs at its position, flushing any
-// batch before it. An interrupt does NOT drop the queue (only an explicit
-// Ctrl+C does), so messages survive a slash-cancel of the agent loop.
+// Send queued input FIFO, batching consecutive plain messages into one combined
+// turn; a queued slash command runs at its position, flushing any batch before
+// it. Messages and commands share this one lane so they keep the order they were
+// typed in. An interrupt does NOT drop the queue (only an explicit Ctrl+C does),
+// so messages survive a slash-cancel of the agent loop.
 void Agent::flush_queue() {
     cancel_all_ = false;
     while (running_ && !Terminal::got_sigterm.load() && !queue_.empty()) {
@@ -1012,9 +1004,12 @@ void Agent::flush_queue() {
                     run_turn(join_batch(batch));
                     batch.clear();
                 }
-                if (!running_ || Terminal::got_sigterm.load()) return;
+                // Break, never return: a command can end the session, and the
+                // queue indicator below must still be refreshed. The batch is
+                // always empty here, so nothing is lost by leaving the loop.
+                if (!running_ || Terminal::got_sigterm.load()) break;
                 handle_command(next);
-                if (!running_ || Terminal::got_sigterm.load()) return;
+                if (!running_ || Terminal::got_sigterm.load()) break;
             } else {
                 batch.push_back(next);
             }
@@ -1037,15 +1032,15 @@ void Agent::pump_input() {
                 ui_.push_history(line);
                 ui_.set_input("");
                 if (!line.empty()) {
+                    // Messages and commands share the queue so the drain keeps
+                    // them in the order typed; a command additionally cancels the
+                    // turn in flight. Kept even while an interrupt unwinds; only
+                    // an explicit Ctrl+C drops the queue.
+                    queue_.push_back(line);
+                    ui_.set_queue(queue_.size());
                     if (line[0] == '/') {
-                        pending_cmds_.push_back(line);  // cancel, run afterwards
                         abort_gen_ = true;
                         cancel_all_ = true;
-                    } else {
-                        // Kept even while an interrupt unwinds; only an
-                        // explicit Ctrl+C drops the queue.
-                        queue_.push_back(line);
-                        ui_.set_queue(queue_.size());
                     }
                 }
                 ui_.redraw();
@@ -1289,8 +1284,9 @@ int Agent::run() {
         }
 
         // A background pass (title naming, compaction) keeps pumping the input
-        // line, so a message typed during one is queued with no flush left to
-        // send it. Drain before the next key, or a later prompt overtakes it.
+        // line, so anything typed during one is queued with no flush of its own
+        // left to send it. Drain here, the single place every pass returns to,
+        // before the next key - or a later prompt would overtake the queue.
         if (!queue_.empty()) flush_queue();
         if (!running_ || Terminal::got_sigterm.load()) break;
 

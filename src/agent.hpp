@@ -45,12 +45,11 @@ private:
     };
     TabCycle tab_cycle_;
 
-    // Messages typed while responding: flushed FIFO after it finishes, batched
-    // (consecutive messages = one combined turn).
+    // Input typed while responding, messages and slash commands alike, in the
+    // order typed: flushed FIFO once the response finishes, consecutive plain
+    // messages batched into one combined turn. The single lane is what keeps a
+    // command from overtaking a message typed before it.
     std::deque<std::string> queue_;
-    // Slash commands typed while responding: cancel generation, run FIFO at
-    // the next boundary (after compaction / a turn).
-    std::deque<std::string> pending_cmds_;
     // Cancel requested (Ctrl+C or slash): stop generation, tool rounds and queue.
     bool cancel_all_ = false;
 
@@ -72,7 +71,7 @@ private:
     void handle_prompt(const std::string& text);
     void run_turn(const std::string& text);       // one user turn + generation
     void pump_input();                            // read keys while generating
-    void flush_queue();                           // send queued messages
+    void flush_queue();                           // send queued messages and commands
     void replay_message(const Message& m);        // redraw one stored message
     void run_generation();
     void process_tool_calls(const nlohmann::json& assistant_msg);
