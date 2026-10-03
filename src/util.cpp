@@ -245,6 +245,22 @@ std::string sanitize_utf8(const std::string& s) {
     return out;
 }
 
+void sanitize_json(nlohmann::json& j) {
+    if (j.is_string()) {
+        const std::string& s = j.get_ref<const std::string&>();
+        if (!is_valid_utf8(s) || s.find('\0') != std::string::npos)
+            j = sanitize_utf8(s);
+        return;
+    }
+    if (j.is_array()) {
+        for (auto& e : j) sanitize_json(e);
+        return;
+    }
+    if (j.is_object()) {
+        for (auto it = j.begin(); it != j.end(); ++it) sanitize_json(it.value());
+    }
+}
+
 bool looks_binary(const std::string& s, size_t sample) {
     size_t n = std::min(s.size(), sample);
     if (n == 0) return false;

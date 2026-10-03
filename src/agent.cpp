@@ -51,8 +51,10 @@ std::string transcript(const std::vector<Message>& msgs, size_t max_msgs,
         std::string c = m.content;
         if (c.size() > per_msg) c = c.substr(0, per_msg) + "\n[...truncated]";
         out << role_name(m.role) << ": " << c << "\n";
-        if (include_tools && m.tool_calls.is_array() && !m.tool_calls.empty())
-            out << "Assistant tool calls: " << m.tool_calls.dump() << "\n";
+        if (include_tools && m.tool_calls.is_array() && !m.tool_calls.empty()) {
+            std::string tc = m.tool_calls.dump();  // never throws: stored sanitized
+            out << "Assistant tool calls: " << tc << "\n";
+        }
     }
     return out.str();
 }
@@ -850,7 +852,7 @@ void Agent::do_compact(bool automatic) {
         std::string sum = final_msg.contains("content") && final_msg["content"].is_string()
                               ? final_msg["content"].get<std::string>()
                               : "";
-        sum = util::trim(sum);
+        sum = util::trim(util::sanitize_utf8(sum));
         if (sum.empty()) {
             ui_.message("Compaction failed: empty summary", STYLE_RED);
             ui_.redraw();
@@ -1161,11 +1163,13 @@ void Agent::run_generation() {
     Message asst;
     asst.role = Role::Assistant;
     if (final_msg.contains("content") && final_msg["content"].is_string())
-        asst.content = final_msg["content"].get<std::string>();
+        asst.content = util::sanitize_utf8(final_msg["content"].get<std::string>());
     if (final_msg.contains("thinking") && final_msg["thinking"].is_string())
-        asst.thinking = final_msg["thinking"].get<std::string>();
-    if (final_msg.contains("tool_calls") && final_msg["tool_calls"].is_array())
+        asst.thinking = util::sanitize_utf8(final_msg["thinking"].get<std::string>());
+    if (final_msg.contains("tool_calls") && final_msg["tool_calls"].is_array()) {
         asst.tool_calls = final_msg["tool_calls"];
+        util::sanitize_json(asst.tool_calls);
+    }
     session_.messages.push_back(asst);
     save_session(false);   // persist every completed model response
     update_ctx_display();  // assistant tokens are now part of the history

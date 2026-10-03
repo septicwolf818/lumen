@@ -44,7 +44,10 @@ nlohmann::json Message::to_json() const {
     if (!thinking.empty()) j["thinking"] = util::sanitize_utf8(thinking);
     if (!name.empty()) j["name"] = util::sanitize_utf8(name);
     if (!tool_call_id.empty()) j["tool_call_id"] = util::sanitize_utf8(tool_call_id);
-    if (!tool_calls.is_null() && !tool_calls.empty()) j["tool_calls"] = tool_calls;
+    if (!tool_calls.is_null() && !tool_calls.empty()) {
+        j["tool_calls"] = tool_calls;
+        util::sanitize_json(j["tool_calls"]);  // nested args can be invalid UTF-8
+    }
     return j;
 }
 
@@ -67,12 +70,12 @@ Message Message::from_json(const nlohmann::json& j) {
 
 nlohmann::json Session::to_json() const {
     nlohmann::json j;
-    j["id"] = id;
-    j["name"] = name;
-    j["model"] = model;
-    j["created"] = created;
-    j["modified"] = modified;
-    j["cwd"] = cwd;
+    j["id"] = util::sanitize_utf8(id);
+    j["name"] = util::sanitize_utf8(name);
+    j["model"] = util::sanitize_utf8(model);
+    j["created"] = util::sanitize_utf8(created);
+    j["modified"] = util::sanitize_utf8(modified);
+    j["cwd"] = util::sanitize_utf8(cwd);
     j["messages"] = nlohmann::json::array();
     for (const auto& m : messages) {
         j["messages"].push_back(m.to_json());

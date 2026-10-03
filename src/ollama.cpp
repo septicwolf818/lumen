@@ -1,4 +1,5 @@
 #include "ollama.hpp"
+#include "util.hpp"
 #include <curl/curl.h>
 
 OllamaClient::OllamaClient(std::string base_url) : base_url_(std::move(base_url)) {
@@ -48,10 +49,11 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
         if (!line.empty() && line.back() == '\r') line.pop_back();
         try {
             auto j = nlohmann::json::parse(line);
+            util::sanitize_json(j);  // model deltas can carry invalid UTF-8
             if (j.contains("error")) {
-                ctx->error = j["error"].is_string()
-                                 ? j["error"].get<std::string>()
-                                 : j["error"].dump();
+                ctx->error = util::sanitize_utf8(
+                    j["error"].is_string() ? j["error"].get<std::string>()
+                                           : j["error"].dump());
                 continue;
             }
             if (j.contains("message") && j["message"].is_object()) {
@@ -278,6 +280,7 @@ bool OllamaClient::chat_stream(
         req["tools"] = tools;
     }
 
+    util::sanitize_json(req);  // model/tool history can carry invalid UTF-8
     std::string payload = req.dump();
     std::string url = base_url_ + "/api/chat";
 

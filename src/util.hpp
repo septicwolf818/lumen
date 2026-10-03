@@ -6,6 +6,7 @@
 #include <optional>
 #include <chrono>
 #include <filesystem>
+#include "json.hpp"
 
 namespace fs = std::filesystem;
 
@@ -51,6 +52,9 @@ uint64_t steady_ms();
 bool is_valid_utf8(const std::string& s);
 // Replace invalid sequences with U+FFFD; also strips NULs
 std::string sanitize_utf8(const std::string& s);
+// Recursively sanitize every string in a JSON value, so dump() never throws
+// type_error.316 on invalid UTF-8 arriving from the model or tool output.
+void sanitize_json(nlohmann::json& j);
 // Heuristic: NUL bytes or mostly non-text → binary
 bool looks_binary(const std::string& s, size_t sample = 8192);
 
