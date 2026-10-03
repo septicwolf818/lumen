@@ -1,0 +1,4 @@
+# Use the compile commands CMake writes to build/compile_commands.json, so the
+# include paths and -std match the real build. Relative -I flags cannot work
+# here: clangd runs the command from the source file's own directory.
+CompilationDatabase: build

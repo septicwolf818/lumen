@@ -8,6 +8,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(CURL REQUIRED)
 find_package(Threads REQUIRED)
 
+# Emit build/compile_commands.json so clangd can parse the real flags instead of
+# guessing an include path (a plain "json.hpp" include needs one).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # nlohmann/json - header only, vendored
 add_library(nlohmann_json INTERFACE)
 target_include_directories(nlohmann_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
