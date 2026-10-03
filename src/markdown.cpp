@@ -874,6 +874,15 @@ Line highlight(const std::string& line, const std::string& lang, bool& in_block)
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
             size_t j = i;
             while (j < n && ident_char(line[j])) ++j;
+            // CSS-style languages: consume "word-word" as one identifier so
+            // hyphenated keywords ("background-color") match the data.
+            if (p->hyphen_idents) {
+                while (j < n && line[j] == '-' && j + 1 < n &&
+                       ident_char(line[j + 1])) {
+                    j += 2;
+                    while (j < n && ident_char(line[j])) ++j;
+                }
+            }
             std::string w = line.substr(i, j - i);
             int style;
             if (is_kw(w))

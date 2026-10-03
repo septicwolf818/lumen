@@ -20,6 +20,7 @@ struct LangProfile {
     std::string block_comment_close;     // multi-line comment end, e.g. "*/"
     bool case_insensitive = false;
     bool python_like = false;            // '#': preprocessor/decorator
+    bool hyphen_idents = false;          // '-' is an identifier char (CSS, ...)
 };
 
 // Look up by name or alias (caller lower-cases). nullptr = unknown language.

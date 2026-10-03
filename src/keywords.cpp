@@ -28,6 +28,17 @@ std::vector<std::string> json_strings(const nlohmann::json& j) {
     return out;
 }
 
+// True if any list holds a hyphenated entry (e.g. CSS "background-color"),
+// meaning '-' must be treated as an identifier character for this profile.
+bool has_hyphenated(const LangProfile& p) {
+    auto any = [](const std::vector<std::string>& v) {
+        for (const auto& s : v)
+            if (s.find('-') != std::string::npos) return true;
+        return false;
+    };
+    return any(p.keywords) || any(p.types) || any(p.constants) || any(p.builtins);
+}
+
 // Comment markers and lexer flags come from the data's optional "syntax"
 // object, so adding a language needs no code change.
 void apply_syntax(const nlohmann::json& v, LangProfile& p) {
@@ -67,6 +78,7 @@ const std::map<std::string, LangProfile>& profiles() {
                 p.constants = json_strings(v.value("constants", nlohmann::json::array()));
                 p.builtins = json_strings(v.value("builtins", nlohmann::json::array()));
                 apply_syntax(v, p);
+                p.hyphen_idents = has_hyphenated(p);
 
                 t[name] = p;
                 for (const auto& a : json_strings(v.value("aliases", nlohmann::json::array())))
