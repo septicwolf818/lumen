@@ -172,8 +172,8 @@ int map_md_style(int st, bool dim = false) {
     // SGR 2 cannot be used here: on the Linux console faint overrides the
     // foreground colour (everything turns grey), so instead drop bold from
     // coloured tokens - that shifts them from bright to normal colours - and
-    // dim only the uncoloured text. Inline-code reverse video is dropped too:
-    // the filled background reads poorly under the recessed treatment.
+    // tint the uncoloured text dim cyan. Inline-code reverse video is dropped
+    // too: the filled background reads poorly under the recessed treatment.
     if (dim) {
         r &= ~STYLE_REVERSE;
         const int colored = STYLE_RED | STYLE_GREEN | STYLE_YELLOW | STYLE_BLUE |
@@ -181,7 +181,7 @@ int map_md_style(int st, bool dim = false) {
         if (r & colored)
             r &= ~(STYLE_BOLD | STYLE_DIM);
         else
-            r |= STYLE_DIM;
+            r |= STYLE_DIM | STYLE_CYAN;
     }
     return r;
 }
