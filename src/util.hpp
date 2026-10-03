@@ -18,16 +18,14 @@ std::string sessions_dir();
 
 bool ensure_dir(const std::string& path);
 
-// Write data to a temporary file and rename it over path, so a crash mid-write
-// cannot leave a truncated file behind. Returns false on any I/O failure.
+// Write via temp file + rename so a crash cannot leave a truncated file.
 bool write_file_atomic(const std::string& path, const std::string& data);
 
 std::string now_iso8601();
 std::string trim(const std::string& s);
 std::vector<std::string> split_lines(const std::string& s);
 
-// Expand a leading "~" or "~/" to the home directory. Forms we cannot resolve
-// safely (~user, $VAR) are returned unchanged rather than mangled.
+// Expand a leading "~"/"~/" to home; unresolvable forms are returned as-is.
 std::string expand_path(const std::string& p);
 
 // Safe path: resolve relative to cwd and optionally forbid escaping cwd
@@ -44,8 +42,7 @@ std::string fmt_tokens(size_t n);
 // Simple shell-escape for display
 std::string shell_escape(const std::string& s);
 
-// https://no-color.org - true when NO_COLOR is present and non-empty, meaning
-// output must be emitted without any ANSI colour/attribute sequences.
+// https://no-color.org - true when NO_COLOR is set non-empty (emit no ANSI).
 bool no_color();
 
 uint64_t steady_ms();

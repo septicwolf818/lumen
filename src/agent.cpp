@@ -10,8 +10,7 @@ namespace {
 // Marker stored with a compaction summary so replay can render it distinctly.
 constexpr const char* kSummaryTag = "[conversation summary]";
 
-// Keeps the UI working indicator (spinner) up for the lifetime of the
-// outermost generation / tool / compaction frame; nested frames are counted.
+// RAII working indicator (spinner); nested frames are depth-counted.
 struct WorkingGuard {
     UI& ui;
     explicit WorkingGuard(UI& u) : ui(u) { ui.set_working(true); }
@@ -58,9 +57,8 @@ std::string transcript(const std::vector<Message>& msgs, size_t max_msgs,
     return out.str();
 }
 
-// Names the app assigns itself: first-run "default" or session-<hex>.
-// Everything else came from the user (/session new|rename) or from title
-// generation, so it must never be regenerated over.
+// Names the app assigns itself ("default" / session-<hex>); anything else came
+// from the user or title generation and must never be regenerated over.
 bool auto_named(const std::string& n) {
     return n.empty() || n == "default" || n.rfind("session-", 0) == 0;
 }
@@ -92,8 +90,7 @@ void Agent::init_session() {
             session_ = *s;
             if (!session_.model.empty()) cfg_.model = session_.model;
             if (!session_.cwd.empty()) {
-                // Only claim the stored cwd if it still exists; otherwise stay
-                // where we are instead of desyncing tools from the process.
+                // Claim the stored cwd only if it still exists.
                 if (chdir(session_.cwd.c_str()) == 0) {
                     tools_->set_cwd(session_.cwd);
                 } else {
@@ -101,7 +98,6 @@ void Agent::init_session() {
                                 STYLE_YELLOW);
                 }
             }
-            // replay messages into UI
             for (const auto& m : session_.messages) replay_message(m);
             update_status();
             maybe_generate_title();  // auto-named sessions get an AI title
@@ -121,7 +117,7 @@ size_t Agent::sent_chars() const {
     size_t n = 0;
     for (const auto& m : session_.messages) {
         auto j = m.to_json();
-        j.erase("thinking");  // display-only: never sent back to the model
+        j.erase("thinking");  // display-only; never sent back to the model
         n += j.dump().size();
     }
     return n;
@@ -240,14 +236,9 @@ bool Agent::rename_session(const std::string& new_name) {
     return false;
 }
 
-// One AI naming attempt per session per run: only for auto-generated names
-// (default / session-<hex>) that already have real conversation context.
-// The answer is slugged to lowercase hyphenated form and de-duplicated
-// against the existing session files (name-2, name-3, ...).
 namespace {
 
-// The title prompt's <conversation> block must not leak into the model's
-// single-line answer; keep the session's real messages as the request context.
+// Caps on the <conversation> context fed to title generation.
 constexpr size_t kTitleMaxMessages = 8;
 constexpr size_t kTitleMaxMsgChars = 300;
 
@@ -286,9 +277,8 @@ void Agent::maybe_generate_title() {
     Terminal::sigint_count.store(0);
     auto should_abort = abort_watcher();
 
-    // Title generation runs after the main loop's turn is done, so the flags it
-    // consumes (abort_gen_ / cancel_all_) cannot affect a response in flight.
-    // It must never clear the flow: aborting only cancels the naming.
+    // Runs after the turn, so the flags it consumes cannot affect a response
+    // in flight; aborting only cancels the naming, never clears the flow.
     std::vector<nlohmann::json> msgs = {
         {{"role", "user"}, {"content", prompt.str()}}};
     nlohmann::json final_msg;
@@ -296,8 +286,7 @@ void Agent::maybe_generate_title() {
     bool ok = ollama_->chat_stream(cfg_.model, msgs, nlohmann::json::array(),
                                    nullptr, nullptr, nullptr, should_abort,
                                    &err, &final_msg);
-    // Leave the agent runnable regardless of the naming outcome.
-    if (abort_gen_) {
+    if (abort_gen_) {  // stay runnable whatever the naming outcome
         abort_gen_ = false;
         cancel_all_ = false;
     }
@@ -366,8 +355,7 @@ void Agent::load_session(const std::string& name) {
 
 namespace {
 
-// Shared by the live tool loop and session replay so tool params always
-// render exactly the same way in both.
+// Shared by the live tool loop and replay so params render identically.
 constexpr size_t kToolArgPreview = 120;
 constexpr size_t kToolResultPreview = 2000;
 
@@ -399,14 +387,12 @@ std::vector<std::string> tool_arg_lines(const nlohmann::json& tc) {
 
 }  // namespace
 
-// Draw one stored message the same way on startup and on /session load,
-// including tool calls and their results.
+// Draw one stored message as on startup / load, including tool calls/results.
 void Agent::replay_message(const Message& m) {
     if (m.role == Role::System) return;
     if (m.role == Role::User) {
         if (m.content.rfind(kSummaryTag, 0) == 0) {
-            // compaction summary: render as its own block, not a user prompt
-            ui_.append("[conversation summary]", 1);
+            ui_.append("[conversation summary]", 1);  // own block, not a prompt
             std::string rest = util::trim(m.content.substr(std::strlen(kSummaryTag)));
             if (!rest.empty()) ui_.append(rest);
             ui_.append("");
@@ -421,8 +407,7 @@ void Agent::replay_message(const Message& m) {
         bool has_content = !m.content.empty();
         bool has_tools = m.tool_calls.is_array() && !m.tool_calls.empty();
         if (!m.thinking.empty()) {
-            // Thinking models: reasoning rendered dim, exactly as it streamed.
-            ui_.append_thinking(m.thinking);
+            ui_.append_thinking(m.thinking);  // reasoning, dim as it streamed
             if (has_content || has_tools) ui_.append("");
         }
         if (has_content) {
@@ -430,9 +415,8 @@ void Agent::replay_message(const Message& m) {
             else ui_.append(m.content);
         }
         if (has_tools) {
-            // Mirror the live layout: blank after the response, then the tool
-            // call with its params - the [result] that follows attaches
-            // directly, exactly as it does while generating.
+            // Mirror the live layout so the following [result] attaches the
+            // same way it does while generating.
             if (has_content || m.thinking.empty()) ui_.append("");
             for (const auto& tc : m.tool_calls) {
                 std::string name = "tool";
@@ -460,17 +444,13 @@ std::vector<nlohmann::json> Agent::build_messages() const {
     std::vector<nlohmann::json> out;
     for (const auto& m : session_.messages) {
         auto j = m.to_json();
-        // Saved for display on session reopen, but not resent: the model
-        // re-reasons each turn and thinking would only bloat the context.
-        j.erase("thinking");
+        j.erase("thinking");  // display-only; resent thinking only bloats context
         out.push_back(std::move(j));
     }
     return out;
 }
 
 void Agent::show_help() {
-    // Argument placeholders are uniformly bracketed ([NAME]) and every
-    // description starts at the same column, whatever the command length.
     ui_.append("Commands:", STYLE_BOLD);
     ui_.append("/help                             Show this help");
     ui_.append("/model [NAME]                     List or select model");
@@ -612,10 +592,8 @@ void Agent::handle_command(const std::string& line) {
             if (Session::remove(tok[2])) ui_.message("Deleted " + tok[2]);
             else ui_.message("Not found", STYLE_RED);
         } else if (tok[1] == "rename" && tok.size() >= 4) {
-            // Rename the current session only: the first argument must name
-            // it, so "/session rename A B" cannot silently ignore A. The old
-            // file is removed only after the new one saved successfully, and
-            // only when both sanitize to different filenames.
+            // Renames the current session only: the first argument must name
+            // it, so "/session rename A B" cannot silently ignore A.
             if (tok[2] != session_.name) {
                 ui_.message("Current session is '" + session_.name +
                                 "' - usage: /session rename " + session_.name +
@@ -624,8 +602,6 @@ void Agent::handle_command(const std::string& line) {
             } else if (tok[3] == session_.name) {
                 ui_.message("Session is already named " + session_.name);
             } else {
-                // Shared with title generation: save under the new name
-                // first, remove the old file only after the save worked.
                 if (rename_session(tok[3]))
                     ui_.message("Renamed to " + session_.name);
             }
@@ -692,8 +668,8 @@ bool contains(const std::vector<std::string>& v, const std::string& s) {
 
 }  // namespace
 
-// Tab completion for slash commands: first press extends to the longest
-// common prefix and lists the candidates, further presses cycle through them.
+// Tab completion: first press extends to the longest common prefix and lists
+// candidates; further presses cycle through them.
 void Agent::handle_tab() {
     std::string in = ui_.input_buf();
     auto t = completion::analyze(in, ui_.cursor(), Session::list());
@@ -721,9 +697,7 @@ void Agent::handle_tab() {
     if (t.matches.size() == 1) {
         tab_cycle_ = TabCycle{};
         bool at_end = (t.end == in.size());
-        // Directory completions end in '/' so the next segment can follow;
-        // everything else terminates the token with a space.
-        bool opens_dir = t.matches[0].back() == '/';
+        bool opens_dir = t.matches[0].back() == '/';  // dir: no trailing space
         replace_token(ui_, t.start, t.end, t.matches[0] + (at_end && !opens_dir ? " " : ""));
         return;
     }
@@ -731,9 +705,8 @@ void Agent::handle_tab() {
     std::string common = completion::common_prefix(t.matches);
     tab_cycle_.active = true;
     tab_cycle_.start = t.start;
-    // Path candidates can share no prefix ("/cd /home/" -> bin, etc, ...):
-    // anchor cycling on the typed word instead of an empty common prefix,
-    // and never replace the token with an empty string.
+    // Path candidates may share no prefix: anchor cycling on the typed word
+    // rather than an empty common prefix, and never clear the token.
     tab_cycle_.token = common.empty() ? word : common;
     tab_cycle_.matches = t.matches;
     tab_cycle_.idx = 0;
@@ -765,9 +738,8 @@ void Agent::do_compact(bool automatic) {
     ui_.append(tag + " summarizing " + std::to_string(before) + " messages...", 1);
     ui_.redraw();
 
-    // Anchored-summary compaction: a <conversation> block followed by an exact
-    // Markdown <template> the model must reproduce, so the result is a
-    // structured handoff another agent can continue from.
+    // A <conversation> block plus an exact Markdown <template> the model must
+    // reproduce, yielding a structured handoff another agent can continue.
     std::ostringstream prompt;
     prompt << "Here is the conversation so far:\n\n<conversation>\n"
            << transcript(session_.messages,
@@ -819,8 +791,7 @@ void Agent::do_compact(bool automatic) {
            "- If the conversation contains a previous [conversation summary], "
            "carry forward its still-relevant details.\n";
 
-    // Stream the summary into the transcript so the user sees what will be
-    // kept; cancellable with Ctrl+C like any other generation.
+    // Stream the summary so the user sees what is kept; Ctrl+C-cancellable.
     abort_gen_ = false;
     cancel_all_ = false;
     Terminal::got_sigint.store(false);
@@ -831,9 +802,7 @@ void Agent::do_compact(bool automatic) {
         {{"role", "user"}, {"content", prompt.str()}}};
     nlohmann::json final_msg;
     std::string err;
-    // Same two-phase display as run_generation: thinking models open a dim
-    // block first, plain models stream the summary in the normal style.
-    int phase = 0;
+    int phase = 0;  // same two-phase display as run_generation
     bool ok = ollama_->chat_stream(
         cfg_.model, msgs, nlohmann::json::array(),
         [this, &phase](const std::string& tok) {
@@ -902,24 +871,21 @@ void Agent::do_compact(bool automatic) {
             kept.push_back(summary);
 
             size_t from = session_.messages.size() > 4 ? session_.messages.size() - 4 : 1;
-            // Never start the kept tail on a tool result: pull back to include
-            // the assistant message that requested it, so pairs stay intact.
+            // Never start the tail on a tool result: pull back to the assistant
+            // message that requested it, keeping pairs intact.
             while (from > 1 && session_.messages[from].role == Role::Tool) --from;
             for (size_t i = from; i < session_.messages.size(); ++i) {
                 if (session_.messages[i].role != Role::System)
                     kept.push_back(session_.messages[i]);
             }
-            // A trailing assistant message that only carries tool calls has no
-            // results yet (unfinished turn) - drop it.
+            // Drop a trailing tool-call-only assistant message (unfinished turn).
             while (kept.size() > 2 && kept.back().role == Role::Assistant &&
                    kept.back().tool_calls.is_array() && !kept.back().tool_calls.empty()) {
                 kept.pop_back();
             }
             session_.messages = kept;
 
-            // The history changed completely: anchor is invalid, but the
-            // window limit for this model is still valid.
-            ctx_anchor_ = -1;
+            ctx_anchor_ = -1;  // history changed; window limit still valid
             ctx_anchor_chars_ = 0;
             update_ctx_display();
             ui_.message(tag + " done: " + std::to_string(before) + " -> " +
@@ -928,9 +894,7 @@ void Agent::do_compact(bool automatic) {
         }
     }
 
-    // Slash commands typed while compacting run now (like after a turn),
-    // in the order they were typed.
-    while (running_ && !pending_cmds_.empty()) {
+    while (running_ && !pending_cmds_.empty()) {  // run queued slash commands
         std::string cmd = std::move(pending_cmds_.front());
         pending_cmds_.pop_front();
         cancel_all_ = false;
@@ -939,9 +903,8 @@ void Agent::do_compact(bool automatic) {
     ui_.redraw();
 }
 
-// Called when the user submits a new message: compact first if the estimated
-// context has reached the configured percentage of the window, so the next
-// request goes out comfortably below the limit.
+// Compact before a new message if estimated context has reached the configured
+// percentage of the window, so the next request stays under the limit.
 void Agent::maybe_auto_compact() {
     if (!cfg_.auto_compact || cfg_.model.empty()) return;
     refresh_ctx_limit();
@@ -949,8 +912,8 @@ void Agent::maybe_auto_compact() {
     int used = estimate_ctx_used();
     size_t pct = static_cast<size_t>(used) * 100u / static_cast<size_t>(ctx_limit_);
     if (pct < cfg_.compaction_threshold) return;
-    // Only worth compacting if messages exist beyond the retained tail;
-    // otherwise compaction would replace nothing and could loop every turn.
+    // Only compact if messages exist beyond the retained tail, else it would
+    // replace nothing and loop every turn.
     size_t from = session_.messages.size() > 4 ? session_.messages.size() - 4 : 1;
     while (from > 1 && session_.messages[from].role == Role::Tool) --from;
     size_t droppable = 0;
@@ -992,9 +955,7 @@ void Agent::run_turn(const std::string& text) {
 
     run_generation();
 
-    // Slash commands typed while responding cancel generation and run now,
-    // in the order they were typed.
-    while (running_ && !pending_cmds_.empty()) {
+    while (running_ && !pending_cmds_.empty()) {  // run queued slash commands now
         std::string cmd = std::move(pending_cmds_.front());
         pending_cmds_.pop_front();
         handle_command(cmd);
@@ -1006,16 +967,15 @@ void Agent::handle_prompt(const std::string& text) {
     if (text.empty()) return;
     run_turn(text);
     flush_queue();
-    // Name the session only once the whole batch/queue is done: title
-    // generation must never interrupt an AI loop that is still running.
+    // Title only after the batch/queue is done: it must never interrupt a
+    // still-running AI loop.
     if (running_ && !generating_) maybe_generate_title();
 }
 
-// Send queued messages FIFO. Consecutive plain messages are batched into a
-// single combined turn (one request, one response); a queued slash command
-// runs at its position, flushing any batch typed before it first. An
-// interrupt does NOT drop the queue - Ctrl+C clears it explicitly where the
-// cancel happens - so messages survive a slash-cancel of the agent loop.
+// Send queued messages FIFO, batching consecutive plain messages into one
+// combined turn; a queued slash command runs at its position, flushing any
+// batch before it. An interrupt does NOT drop the queue (only an explicit
+// Ctrl+C does), so messages survive a slash-cancel of the agent loop.
 void Agent::flush_queue() {
     cancel_all_ = false;
     while (running_ && !Terminal::got_sigterm.load() && !queue_.empty()) {
@@ -1043,9 +1003,8 @@ void Agent::flush_queue() {
     if (!queue_.empty()) ui_.redraw();
 }
 
-// Read keys while the model is generating. Called from the curl callbacks,
-// so it must only touch the UI input line and the queue - never dispatch a
-// prompt or a command.
+// Read keys while generating. Called from curl callbacks, so it must touch
+// only the input line and the queue - never dispatch a prompt or command.
 void Agent::pump_input() {
     ui_.tick_spinner();  // animate the separator while the model works
     ui_.tick_marquee();
@@ -1057,13 +1016,12 @@ void Agent::pump_input() {
                 ui_.set_input("");
                 if (!line.empty()) {
                     if (line[0] == '/') {
-                        // slash command: cancel the agent loop, run afterwards
-                        pending_cmds_.push_back(line);
+                        pending_cmds_.push_back(line);  // cancel, run afterwards
                         abort_gen_ = true;
                         cancel_all_ = true;
                     } else {
-                        // kept even while an interrupt is unwinding - the
-                        // queue is only dropped by an explicit Ctrl+C
+                        // Kept even while an interrupt unwinds; only an
+                        // explicit Ctrl+C drops the queue.
                         queue_.push_back(line);
                         ui_.set_queue(queue_.size());
                     }
@@ -1075,6 +1033,7 @@ void Agent::pump_input() {
                 abort_gen_ = true;
                 cancel_all_ = true;
                 queue_.clear();  // cancel means cancel, queue included
+
                 ui_.set_queue(0);
                 ui_.set_input("");
                 ui_.redraw();
@@ -1096,7 +1055,7 @@ void Agent::pump_input() {
             case Key::Escape:    ui_.set_input(""); ui_.redraw(); break;
             case Key::PageUp:    ui_.scroll_page_up();   ui_.redraw(); break;
             case Key::PageDown:  ui_.scroll_page_down(); ui_.redraw(); break;
-            default: break;  // Tab and other control keys: ignored while busy
+            default: break;  // Tab and other keys are ignored while busy
         }
     }
 }
@@ -1126,10 +1085,9 @@ void Agent::run_generation() {
     OllamaUsage usage;
     auto messages = build_messages();
 
-    // Streaming display phase: 0 = nothing yet, 1 = thinking block (dim),
-    // 2 = content block (normal). Thinking models open the dim block on the
-    // first reasoning token; models that never think stream normally from
-    // the first content token.
+    // Display phase: 0 = nothing, 1 = thinking (dim), 2 = content (normal).
+    // Thinking models open the dim block on the first reasoning token; others
+    // stream normally from the first content token.
     int phase = 0;
     auto maybe_redraw = [this]() {
         static uint64_t last = 0;
@@ -1173,8 +1131,8 @@ void Agent::run_generation() {
     ui_.end_stream();
 
     if (err == "interrupted") {
-        // Cancelled (Ctrl+C or a slash command): drop the unfinished assistant
-        // message, but persist everything that did complete (tool results etc).
+        // Cancelled: drop the unfinished assistant message, but keep everything
+        // that did complete (tool results etc).
         ui_.append("");
         ui_.message("(interrupted)", STYLE_YELLOW);
         generating_ = false;
@@ -1191,8 +1149,8 @@ void Agent::run_generation() {
         return;
     }
 
-    // Anchor Ollama's exact token counts to the history state that was just
-    // sent (the session has not been extended with this response yet).
+    // Anchor Ollama's exact token counts to the history just sent (the
+    // response is not yet in the session).
     if (usage.prompt_eval >= 0) {
         ctx_anchor_ = usage.prompt_eval + (usage.eval > 0 ? usage.eval : 0);
         ctx_anchor_chars_ = sent_chars();
@@ -1200,7 +1158,6 @@ void Agent::run_generation() {
         update_ctx_display();
     }
 
-    // Store assistant message
     Message asst;
     asst.role = Role::Assistant;
     if (final_msg.contains("content") && final_msg["content"].is_string())
@@ -1210,10 +1167,10 @@ void Agent::run_generation() {
     if (final_msg.contains("tool_calls") && final_msg["tool_calls"].is_array())
         asst.tool_calls = final_msg["tool_calls"];
     session_.messages.push_back(asst);
-    save_session(false);  // every completed model response is persisted
+    save_session(false);   // persist every completed model response
     update_ctx_display();  // assistant tokens are now part of the history
 
-    ui_.append("");  // blank after response
+    ui_.append("");
     ui_.redraw();
 
     if (!cancel_all_ && !asst.tool_calls.is_null() && asst.tool_calls.is_array() &&
@@ -1222,14 +1179,13 @@ void Agent::run_generation() {
     }
 
     generating_ = false;
-    save_session(false);  // silent auto-save; Ctrl-S / quit still confirm
+    save_session(false);
 }
 
 void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
     if (!assistant_msg.contains("tool_calls")) return;
     WorkingGuard work(ui_);  // spinner stays up between tool rounds
     for (const auto& tc : assistant_msg["tool_calls"]) {
-        // Ctrl+C / slash cancel: stop the agent loop, no further tool calls
         if (cancel_all_ || !running_ || Terminal::got_sigterm.load()) return;
         std::string name;
         nlohmann::json args = nlohmann::json::object();
@@ -1273,15 +1229,14 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
         tool_msg.tool_call_id = id;
         tool_msg.name = name;
         session_.messages.push_back(tool_msg);
-        // Persist after every single tool response: an interrupt (or crash)
-        // mid-batch must never lose results that already came back.
+        // Persist after each result so a mid-batch interrupt/crash never loses
+        // results that already came back.
         save_session(false);
     }
 
     if (cancel_all_ || !running_ || Terminal::got_sigterm.load()) return;
 
-    // Continue generation with tool results
-    ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);
+    ui_.append("Agent:", STYLE_BOLD | STYLE_CYAN);  // continue with the results
     run_generation();
 }
 
@@ -1293,9 +1248,7 @@ int Agent::run() {
         ui_.append("Welcome to lumen. Select a model with /model or Ctrl-L.", 1);
         ui_.append("");
     }
-    // Help only for a fresh/empty session. A restored conversation opens on
-    // its replayed tail instead, so recent tool calls and results are the
-    // first thing visible without scrolling.
+    // Help only for a fresh session; a restored one opens on its replayed tail.
     if (session_.messages.size() <= 1) show_help();
     ui_.redraw();
 
@@ -1305,13 +1258,9 @@ int Agent::run() {
             ui_.on_resize();
         }
 
-        // Double Ctrl-C to quit when not generating
-        if (Terminal::sigint_count.load() >= 2 && !generating_) {
-            break;
-        }
+        if (Terminal::sigint_count.load() >= 2 && !generating_) break;  // double Ctrl-C
         if (Terminal::got_sigint.exchange(false) && !generating_) {
-            // first Ctrl-C at prompt: clear input
-            ui_.set_input("");
+            ui_.set_input("");  // first Ctrl-C at the prompt clears the input
             ui_.redraw();
         }
 
@@ -1320,8 +1269,7 @@ int Agent::run() {
         auto ev = input_.read(100);
         if (!ev) continue;
 
-        // Double Ctrl-C to quit only when the presses are consecutive:
-        // any other key restarts the pair.
+        // Double Ctrl-C quits only when consecutive; any other key resets it.
         if (ev->key != Key::CtrlC) Terminal::sigint_count.store(0);
 
         switch (ev->key) {

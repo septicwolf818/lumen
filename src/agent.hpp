@@ -45,11 +45,11 @@ private:
     };
     TabCycle tab_cycle_;
 
-    // Messages typed while the model is responding: sent after it finishes,
-    // flushed FIFO and batched (consecutive messages = one combined turn).
+    // Messages typed while responding: flushed FIFO after it finishes, batched
+    // (consecutive messages = one combined turn).
     std::deque<std::string> queue_;
-    // Slash commands typed while responding: cancel generation, run in FIFO
-    // order at the next natural boundary (after compaction / a turn).
+    // Slash commands typed while responding: cancel generation, run FIFO at
+    // the next boundary (after compaction / a turn).
     std::deque<std::string> pending_cmds_;
     // Cancel requested (Ctrl+C or slash): stop generation, tool rounds and queue.
     bool cancel_all_ = false;
@@ -57,10 +57,9 @@ private:
     // Title generation: at most one AI naming attempt per session per run.
     bool title_attempted_ = false;
 
-    // Context tracking for the status bar and auto-compaction.
-    // ctx_anchor_ tokens were confirmed by Ollama (prompt_eval_count +
-    // eval_count) for the history state of ctx_anchor_chars_ bytes; anything
-    // added since is estimated at ~4 chars/token. limit 0 = unknown.
+    // Context tracking for the status bar and auto-compaction. ctx_anchor_
+    // tokens are Ollama-reported for the history at ctx_anchor_chars_ bytes;
+    // anything added since is estimated at ~4 chars/token. limit 0 = unknown.
     std::string ctx_model_;      // model the tracking state belongs to
     int ctx_limit_ = 0;          // allocated window (config or /api/ps)
     int ctx_anchor_ = -1;        // exact tokens at the last reported usage

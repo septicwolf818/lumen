@@ -24,9 +24,9 @@ static Role str_to_role(const std::string& s) {
     return Role::User;
 }
 
-// A flat, single-component file stem. Names that could climb out of the
-// sessions directory ("/", "..", separators) are skipped for direct path
-// use; callers fall back to scanning file contents instead.
+// Flat, single-component file stem safe for direct path use. Anything that
+// could climb out of the sessions dir ("/", "..", separators) is rejected;
+// callers then fall back to scanning file contents.
 static bool flat_stem(const std::string& s) {
     if (s.empty() || s == "." || s == "..") return false;
     for (char c : s) {
@@ -139,9 +139,8 @@ std::string Session::slugify(const std::string& raw) {
 std::string Session::unique_title(const std::string& base,
                                   const std::string& exclude_stem) {
     std::string b = base.empty() ? "session" : base;
-    // Session files are addressed by filename stem (save uses the sanitized
-    // name, or the id), so stems are exactly what must not collide - two
-    // sessions sharing a stem would overwrite each other's file.
+    // Files are addressed by stem (sanitized name or id), so stems must not
+    // collide or two sessions would overwrite each other's file.
     auto taken = [&exclude_stem](const std::string& cand) {
         for (const auto& s : Session::list()) {
             if (s == cand && s != exclude_stem) return true;
@@ -166,8 +165,7 @@ bool Session::save() const {
 
 std::optional<Session> Session::load(const std::string& name_or_id) {
     util::ensure_dir(util::sessions_dir());
-    // try exact filename stem
-    if (flat_stem(name_or_id)) {
+    if (flat_stem(name_or_id)) {  // exact filename stem first
         std::string path = util::sessions_dir() + "/" + name_or_id + ".json";
         std::ifstream in(path);
         if (in) {
@@ -180,7 +178,7 @@ std::optional<Session> Session::load(const std::string& name_or_id) {
             }
         }
     }
-    // fallback: scan all sessions for matching id or name
+    // Fallback: scan files for a matching id or name.
     std::error_code ec;
     for (auto& ent : fs::directory_iterator(util::sessions_dir(), ec)) {
         std::error_code tec;
@@ -230,8 +228,7 @@ std::vector<Session::Info> Session::list_info() {
         Info info;
         info.name = p.stem().string();
 
-        // The file mtime is the last save, i.e. the last activity, and needs
-        // no parsing of (possibly large) session JSON.
+        // mtime = last save = last activity, avoiding a parse of the JSON.
         std::error_code fec;
         auto ftime = fs::last_write_time(p, fec);
         if (!fec) {
@@ -262,8 +259,7 @@ bool Session::remove(const std::string& name_or_id) {
         std::error_code ec;
         if (fs::remove(path, ec)) return true;
     }
-    // scan
-    std::error_code ec;
+    std::error_code ec;  // fall back to scanning by id/name
     for (auto& ent : fs::directory_iterator(util::sessions_dir(), ec)) {
         std::error_code tec;
         if (!ent.is_regular_file(tec)) continue;

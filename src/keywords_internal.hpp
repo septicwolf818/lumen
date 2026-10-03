@@ -3,10 +3,9 @@
 #include <string>
 #include <vector>
 
-// Internal bridge between the Markdown lexer (markdown.cpp) and the embedded
-// language keyword data (keywords.cpp). keywords.cpp is the only translation
-// unit that includes the build-generated keywords_data.inc, so markdown.cpp
-// compiles on its own and does not depend on the generated header.
+// Bridge between the Markdown lexer and the embedded keyword data.
+// keywords.cpp is the only unit that includes the generated keywords_data.inc,
+// so markdown.cpp compiles without that header.
 
 namespace md {
 namespace detail {
@@ -23,8 +22,7 @@ struct LangProfile {
     bool python_like = false;            // '#': preprocessor/decorator
 };
 
-// Look up a language by name or alias (already lower-cased by the caller).
-// Returns nullptr when the language is unknown (plain code block).
+// Look up by name or alias (caller lower-cases). nullptr = unknown language.
 const LangProfile* lookup_language(const std::string& name);
 
 }  // namespace detail

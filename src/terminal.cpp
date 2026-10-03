@@ -40,8 +40,7 @@ void Terminal::install_signal_handlers() {
     sigaction(SIGTERM, &sa, nullptr);
     sigaction(SIGWINCH, &sa, nullptr);
 
-    // Ignore SIGTSTP so we don't suspend into a bad state
-    signal(SIGTSTP, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);  // never suspend into a bad state
 }
 
 bool Terminal::enter_raw() {
@@ -49,8 +48,8 @@ bool Terminal::enter_raw() {
     if (tcgetattr(STDIN_FILENO, &orig_) != 0) return false;
     has_orig_ = true;
 
+    // Non-canonical, no echo, no signal chars (Ctrl-C is handled in-app).
     struct termios raw = orig_;
-    // Non-canonical, no echo, no signal chars (we handle Ctrl-C ourselves)
     raw.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHOK | ECHONL | ISIG | IEXTEN);
     raw.c_iflag &= ~(IXON | ICRNL | INLCR | IGNCR | BRKINT | INPCK | ISTRIP);
     raw.c_oflag &= ~(OPOST);
@@ -69,8 +68,8 @@ void Terminal::restore() {
         has_orig_ = false;
     }
     if (raw_) {
-        // restore cursor and attrs (no attr reset under NO_COLOR: nothing
-        // styling-related was written in the first place)
+        // Restore cursor/attrs. Under NO_COLOR nothing styling-related was
+        // written, so the attr reset is omitted.
         const char* seq = util::no_color() ? "\033[?25h\033[r"
                                            : "\033[0m\033[?25h\033[r";
         ::write(STDOUT_FILENO, seq, std::strlen(seq));
@@ -96,8 +95,7 @@ void Terminal::update_size() {
         rows_ = ws.ws_row;
         cols_ = ws.ws_col;
     } else {
-        // fallback from env
-        const char* r = std::getenv("LINES");
+        const char* r = std::getenv("LINES");  // fallback when the ioctl fails
         const char* c = std::getenv("COLUMNS");
         if (r) rows_ = std::atoi(r);
         if (c) cols_ = std::atoi(c);

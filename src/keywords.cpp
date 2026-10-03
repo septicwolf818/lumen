@@ -12,8 +12,8 @@ namespace md {
 namespace detail {
 namespace {
 
-// The embedded JSON is split across chunks to keep every string literal within
-// the compiler's portable length; join them once for parsing.
+// The embedded JSON is chunked to stay within the compiler's portable string
+// literal length; join the chunks once for parsing.
 std::string keywords_json() {
     std::string s;
     for (const char* const* p = kKeywordsJsonChunks; p && *p; ++p) s += *p;
@@ -29,7 +29,7 @@ std::vector<std::string> json_strings(const nlohmann::json& j) {
 }
 
 // Comment markers and lexer flags come from the data's optional "syntax"
-// object, so adding a language never needs a code change.
+// object, so adding a language needs no code change.
 void apply_syntax(const nlohmann::json& v, LangProfile& p) {
     if (!v.contains("syntax") || !v["syntax"].is_object()) return;
     const auto& s = v["syntax"];
@@ -48,9 +48,8 @@ void apply_syntax(const nlohmann::json& v, LangProfile& p) {
 const std::map<std::string, LangProfile>& profiles() {
     static const std::map<std::string, LangProfile> table = []() -> std::map<std::string, LangProfile> {
         std::map<std::string, LangProfile> t;
-        // Any failure here (missing/corrupt data or an unexpected JSON shape)
-        // degrades to an empty table: unknown languages then render as plain
-        // code in the built-in colour instead of aborting the program.
+        // Any failure (missing/corrupt data, unexpected shape) degrades to an
+        // empty table: unknown languages render as plain code, never abort.
         try {
             nlohmann::json j = nlohmann::json::parse(keywords_json(), nullptr, false);
             if (j.is_discarded() || !j.is_object() || !j.contains("languages") ||
@@ -70,7 +69,6 @@ const std::map<std::string, LangProfile>& profiles() {
                 apply_syntax(v, p);
 
                 t[name] = p;
-                // Register every alias pointing at the same profile.
                 for (const auto& a : json_strings(v.value("aliases", nlohmann::json::array())))
                     t[a] = p;
             }

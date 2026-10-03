@@ -5,8 +5,7 @@
 #include <optional>
 #include <cstdint>
 
-// Keyboard input decoder for Linux TTY / VT100 / xterm-ish sequences.
-// Designed to work with TERM=linux (limited sequences) and normal SSH terminals.
+// Keyboard decoder for TERM=linux and VT100/xterm-style terminals.
 
 enum class Key : int {
     None = 0,
@@ -37,11 +36,10 @@ class InputReader {
 public:
     InputReader();
 
-    // Non-blocking-ish: reads available bytes and returns next event if ready.
-    // Returns nullopt if no complete event yet.
+    // Return the next complete event, or nullopt if none is ready yet.
     std::optional<KeyEvent> poll();
 
-    // Block until an event (or timeout_ms). timeout_ms=0 = non-block, -1 = forever
+    // Wait for an event. timeout_ms: 0 = non-blocking, -1 = forever.
     std::optional<KeyEvent> read(int timeout_ms = -1);
 
     void push_byte(unsigned char c);  // for testing

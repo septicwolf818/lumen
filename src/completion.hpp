@@ -80,10 +80,9 @@ inline std::vector<std::string> filter(const std::vector<std::string>& pool,
 
 }  // namespace detail
 
-// Candidates for a path argument (e.g. "/cd /usr/lo<Tab>"). Returns full
-// replacement tokens: directories keep a trailing '/' so completion can
-// continue into them. "~/..." is resolved against $HOME but stays as typed;
-// hidden entries are offered only when the word already starts with '.'.
+// Candidates for a path argument. Returns full replacement tokens; directories
+// keep a trailing '/'. "~/..." resolves via $HOME but stays as typed; hidden
+// entries appear only when the word starts with '.'.
 inline std::vector<std::string> path_candidates(const std::string& word) {
     namespace fs = std::filesystem;
     std::vector<std::string> out;
@@ -125,13 +124,10 @@ inline std::vector<std::string> path_candidates(const std::string& word) {
     return out;
 }
 
-// Find the token containing `cursor` and, when it is a completable position,
-// the candidates for it. Completable positions are:
-//   - the first token, when the input starts with '/'
-//   - the second token of "/session ..." (subcommands)
-//   - the second token of "/cd ..." (filesystem paths)
-//   - the session name argument of "/session load|delete|rename ..."
-// `sessions` supplies the candidate session names for the last case.
+// Find the token at `cursor` and its candidates, if completable. Positions:
+// first token (when input starts with '/'), second token of "/session" or
+// "/cd", and the name argument of "/session load|delete|rename". `sessions`
+// supplies candidates for the last case.
 inline Target analyze(const std::string& input, size_t cursor,
                       const std::vector<std::string>& sessions = {}) {
     Target t;

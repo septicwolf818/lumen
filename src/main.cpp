@@ -17,7 +17,6 @@ int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
 
-    // Ensure directories exist
     util::ensure_dir(util::config_dir());
     util::ensure_dir(util::sessions_dir());
 
@@ -41,22 +40,17 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Draw the session on the alt screen so the console content from before
-    // lumen can be restored on exit (ignored where unsupported - the exit
-    // dump then rebuilds the screen instead).
+    // Draw on the alt screen so the prior console content is restored on exit
+    // (ignored where unsupported; the exit dump rebuilds the screen instead).
+    // Terminal's destructor also restores, covering unexpected exit paths.
     term.enter_alt_screen();
-
-    // Make sure we restore even on unexpected exit paths
-    // (destructor of Terminal also restores)
 
     InputReader input;
     UI ui(term);
     Agent agent(term, ui, input);
 
-    // Shared exit path: cooked mode first (so \n behaves), then the screen
-    // dump (harmless inside the alt screen, the fallback when it was
-    // ignored), then leave the alt screen to restore previous content, then
-    // the farewell line for the shell.
+    // Exit path: cooked mode first (so \n works), then the screen dump (the
+    // fallback when alt screen was ignored), leave the alt screen, farewell.
     auto finish = [&]() {
         term.restore();
         ui.dump_screen();

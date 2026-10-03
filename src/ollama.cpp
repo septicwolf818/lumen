@@ -72,12 +72,12 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                 }
                 if (msg.contains("tool_calls") && msg["tool_calls"].is_array()) {
                     // Ollama sends complete tool calls (several may share one
-                    // chunk, without an index); OpenAI-style streams fragment
-                    // them and tag each piece with an index. Fragments merge by
-                    // index; a nameless piece continues the newest slot; a
-                    // named piece without an index starts a new slot - so a
-                    // multi-tool response is never fused into one corrupted
-                    // entry with concatenated arguments.
+                    // chunk, no index); OpenAI-style streams fragment them,
+                    // tagging each with an index. Merge fragments by index; a
+                    // nameless piece continues the newest slot; a named piece
+                    // with no index opens a new slot. Keeps a multi-tool
+                    // response from fusing into one entry with concatenated
+                    // arguments.
                     for (auto& tc : msg["tool_calls"]) {
                         bool has_index =
                             tc.contains("index") && tc["index"].is_number();
@@ -89,8 +89,8 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                         size_t idx;
                         if (has_index) {
                             int64_t i = tc["index"].get<int64_t>();
-                            // refuse absurd indexes - each one pre-allocates a slot
-                            if (i < 0 || i > 63) continue;
+                            if (i < 0 || i > 63) continue;  // each slot allocates
+
                             idx = static_cast<size_t>(i);
                         } else if (named && !ctx->tool_calls.empty() &&
                                    ctx->tool_calls.back().contains("function") &&
@@ -132,8 +132,7 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                     ctx->prompt_eval = j["prompt_eval_count"].get<int>();
                 if (j.contains("eval_count") && j["eval_count"].is_number())
                     ctx->eval_count = j["eval_count"].get<int>();
-                // finalize
-                if (ctx->final_msg) {
+                if (ctx->final_msg) {  // assemble the full assistant message
                     (*ctx->final_msg) = nlohmann::json{
                         {"role", "assistant"},
                         {"content", ctx->content_acc}
@@ -141,8 +140,7 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                     if (!ctx->thinking_acc.empty())
                         (*ctx->final_msg)["thinking"] = ctx->thinking_acc;
                     if (!ctx->tool_calls.empty()) {
-                        // only include complete tool calls
-                        nlohmann::json cleaned = nlohmann::json::array();
+                        nlohmann::json cleaned = nlohmann::json::array();  // complete only
                         for (auto& tc : ctx->tool_calls) {
                             if (tc.contains("function") && tc["function"].is_object() &&
                                 tc["function"].contains("name") &&
@@ -161,7 +159,7 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                 }
             }
         } catch (const std::exception&) {
-            // ignore parse errors on partial
+            // Ignore parse errors on a partial line.
         }
     }
     ctx->buffer.erase(0, pos);
@@ -229,15 +227,13 @@ int OllamaClient::context_length(const std::string& model) {
     if (rc != CURLE_OK || http != 200) return 0;
 
     auto strip_tag = [](const std::string& s) {
-        // Compare names before the ":tag" suffix ("llama3:8b" -> "llama3").
-        size_t p = s.find(':');
+        size_t p = s.find(':');  // compare "llama3:8b" as "llama3"
         return p == std::string::npos ? s : s.substr(0, p);
     };
     try {
         auto j = nlohmann::json::parse(body);
         if (!j.contains("models") || !j["models"].is_array()) return 0;
-        // exact match first, then match on the name without a tag
-        for (int pass = 0; pass < 2; ++pass) {
+        for (int pass = 0; pass < 2; ++pass) {  // exact match, then tag-insensitive
             for (auto& m : j["models"]) {
                 if (!m.contains("name") || !m["name"].is_string()) continue;
                 std::string name = m["name"].get<std::string>();
@@ -304,9 +300,8 @@ bool OllamaClient::chat_stream(
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
 
-    // Drive the transfer with the multi interface: the wait below wakes us up
-    // every 50 ms so should_abort (and the terminal input pump) keeps running
-    // even while the model is silent between tokens.
+    // The multi interface wakes us every 50 ms so should_abort (and the input
+    // pump) keep running even while the model is silent between tokens.
     CURLM* multi = curl_multi_init();
     if (!multi) {
         curl_slist_free_all(headers);
@@ -354,8 +349,7 @@ bool OllamaClient::chat_stream(
 
     if (ctx.aborted) {
         if (err) *err = "interrupted";
-        // still return whatever we have
-        if (final_message && final_message->empty()) {
+        if (final_message && final_message->empty()) {  // keep the partial answer
             *final_message = nlohmann::json{
                 {"role", "assistant"},
                 {"content", ctx.content_acc}

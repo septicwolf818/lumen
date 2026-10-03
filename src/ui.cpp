@@ -150,10 +150,9 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::QUOTE) r |= STYLE_DIM;
     if (st & md::MARKER) r |= STYLE_DIM;
 
-    // Code block syntax colours. The Linux console offers only seven usable
-    // foreground colours, so categories are spread across distinct ones and
-    // bold is reserved for keywords: default text stays uncoloured, which keeps
-    // the highlighted tokens clearly visible instead of all-cyan mush.
+    // Code syntax colours. Only seven usable console foregrounds, so
+    // categories are spread across distinct ones, bold marks keywords, and
+    // base text stays uncoloured.
     if (st & md::CODE_BLOCK) r |= STYLE_NORMAL;   // base code text: default fg
     if (st & md::SYN_KEYWORD) r |= STYLE_BOLD | STYLE_BLUE;
     if (st & md::SYN_CONSTANT) r |= STYLE_MAGENTA;
@@ -168,18 +167,14 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
 
-    // Thinking: keep the full syntax highlight but make it read as recessed.
-    // SGR 2 cannot be combined with a colour on the Linux console: faint
-    // overrides the foreground and everything turns grey. So coloured tokens
-    // lose bold (bright -> normal colours), inline code becomes plain cyan
-    // instead of reverse video, and only the uncoloured text is dimmed.
+    // Thinking: same highlight, made to read recessed. SGR 2 cannot combine
+    // with a colour on the Linux console (faint overrides the foreground,
+    // greying everything), so coloured tokens lose bold (bright -> normal),
+    // inline code is plain cyan instead of reverse, and the rest is dimmed.
     if (dim) {
         r &= ~STYLE_REVERSE;
         if (st & md::HEADING) {
-            // Headings keep their emphasis without the cyan tint: cyan is
-            // reserved for inline code here, and a cyan heading reads oddly
-            // in the recessed thinking block.
-            r = STYLE_DIM;
+            r = STYLE_DIM;  // no cyan tint: cyan is reserved for inline code
         } else {
             const int colored = STYLE_RED | STYLE_GREEN | STYLE_YELLOW |
                                 STYLE_BLUE | STYLE_MAGENTA | STYLE_CYAN;
@@ -206,8 +201,7 @@ void UI::set_status(const std::string& model, const std::string& session, const 
 }
 
 int UI::viewport_rows() const {
-    // 1 status + 1 sep + 1 input = 3 reserved
-    return std::max(1, term_.rows() - 3);
+    return std::max(1, term_.rows() - 3);  // status + separator + input
 }
 
 void UI::push_lines(std::vector<DisplayLine> lines) {
@@ -369,8 +363,7 @@ void UI::begin_stream(int style) {
     stream_style_ = style;
     stream_acc_.clear();
     lines_.push_back(DisplayLine{});
-    // The stream block owns everything from this line on; stream_token()
-    // pops back to here before re-wrapping the accumulated text.
+    // stream_token() pops back to this line before re-wrapping.
     stream_base_ = lines_.size() - 1;
 }
 
@@ -379,10 +372,9 @@ void UI::stream_token(const std::string& tok) {
         begin_stream();
     }
     stream_acc_ += tok;
-    // Render Markdown live so code fences are highlighted as they stream. The
-    // parser is safe on partial input: an unclosed fence renders as a code
-    // block and half-typed emphasis stays literal, so nothing jumps around.
-    // Thinking blocks (STYLE_DIM) use the same renderer with dim overlaid.
+    // Render Markdown live: the parser is safe on partial input (an unclosed
+    // fence renders as code, half-typed emphasis stays literal), so the layout
+    // never jumps. Thinking blocks use the same renderer with dim.
     std::vector<DisplayLine> wrapped;
     if (markdown_)
         wrapped = render_markdown(stream_acc_, std::max(10, term_.cols()),
@@ -396,7 +388,7 @@ void UI::stream_token(const std::string& tok) {
 }
 
 void UI::end_stream() {
-    // Final render once the message is complete (closes any open fences cleanly).
+    // Final render closes any still-open fence cleanly.
     if (markdown_ && !stream_acc_.empty()) {
         auto rendered = render_markdown(stream_acc_, term_.cols(),
                                         stream_style_ == STYLE_DIM);
@@ -633,9 +625,7 @@ void UI::draw_viewport() {
         int idx = start + i;
         if (idx >= 0 && idx < total) {
             const auto& dl = lines_[static_cast<size_t>(idx)];
-            // Cut by character (UTF-8 codepoints); lines are wrapped to the
-            // current width, so this only trims after a shrink.
-            int avail = term_.cols();
+            int avail = term_.cols();  // char-cut; only trims after a shrink
             for (const auto& sp : dl.spans) {
                 if (avail <= 0) break;
                 std::string t = utf8_prefix(sp.text, static_cast<size_t>(avail));
@@ -645,8 +635,7 @@ void UI::draw_viewport() {
         }
     }
 
-    // separator / scroll / spinner indicator
-    term_.move_cursor(term_.rows() - 1, 1);
+    term_.move_cursor(term_.rows() - 1, 1);  // separator / scroll / spinner
     term_.clear_line();
     std::string ind;
     if (working_depth_ > 0) {
@@ -671,21 +660,18 @@ void UI::draw_input() {
     term_.clear_line();
     std::string prefix = "> ";
     write_styled(term_, STYLE_BOLD | STYLE_GREEN, prefix);
-    // Show a window of the input around the cursor when it overflows.
-    int avail = term_.cols() - static_cast<int>(prefix.size());
+    int avail = term_.cols() - static_cast<int>(prefix.size());  // window the input
     if (avail < 4) avail = 4;
     std::string shown = input_;
     size_t vis_cursor = cursor_;
     if (static_cast<int>(shown.size()) > avail) {
-        // window around cursor
-        size_t start = 0;
+        size_t start = 0;  // window around the cursor
         if (cursor_ + 1 > static_cast<size_t>(avail))
             start = cursor_ + 1 - static_cast<size_t>(avail);
         shown = input_.substr(start, static_cast<size_t>(avail));
         vis_cursor = cursor_ - start;
     }
     term_.write(shown);
-    // place cursor
     term_.move_cursor(term_.rows(), static_cast<int>(prefix.size()) + static_cast<int>(vis_cursor) + 1);
 }
 
@@ -697,11 +683,9 @@ void UI::redraw() {
     term_.show_cursor();
 }
 
-// Reprint the conversation window sequentially so it stays readable after
-// the app exits: inside the alt screen it is discarded with the buffer; on a
-// terminal that ignored the alt screen it rebuilds a clean last frame (the
-// status / separator / input rows are dropped). Only sequences the plain
-// Linux console supports are used (home, erase display, SGR).
+// Reprint the on-screen conversation sequentially so it survives exit: a
+// no-op inside the alt screen, and a clean last frame on terminals that
+// ignored it. Uses only plain Linux console sequences (home, erase, SGR).
 void UI::dump_screen() {
     int start, rows;
     viewport_window(start, rows);
@@ -713,20 +697,16 @@ void UI::dump_screen() {
         int idx = start + i;
         if (idx >= total) break;
         const auto& dl = lines_[static_cast<size_t>(idx)];
-        // Re-wrap to the current width: lines were wrapped when appended and
-        // the window may have shrunk since (on_resize does not re-wrap).
+        // Re-wrap: the window may have shrunk since the line was appended.
         for (auto& wl : wrap_spans(dl.spans, width)) {
             for (const auto& sp : wl.spans) write_styled(term_, sp.style, sp.text);
             term_.write("\r\n");
         }
     }
-    // Cursor left at column 1 of the row after the last printed line.
 }
 
 void UI::farewell() {
-    // Leading newline: after leave_alt_screen() the cursor sits right behind
-    // the old shell prompt, so the message must start on its own row.
-    term_.write("\r\n");
+    term_.write("\r\n");  // start on a fresh row, past the old shell prompt
     write_styled(term_, STYLE_BOLD | STYLE_GREEN, "lumen: Bye!");
     term_.write(" Session was ");
     write_styled(term_, STYLE_BOLD,
@@ -740,10 +720,9 @@ void UI::on_resize() {
 }
 
 bool UI::confirm(InputReader& in, const std::string& prompt) {
-    // Raw mode has OPOST off, so a '\n' would not return to column 1 and a
-    // multi-line prompt would staircase across the screen. Put everything
-    // except the last line into the scrollback and keep the question on the
-    // input row.
+    // Raw mode has OPOST off, so \n will not return to column 1 and a
+    // multi-line prompt would staircase. Print all but the last line to the
+    // scrollback and keep the question on the input row.
     auto lines = util::split_lines(prompt);
     std::string question = lines.empty() ? prompt : lines.back();
     if (!lines.empty()) lines.pop_back();
@@ -762,9 +741,9 @@ bool UI::confirm(InputReader& in, const std::string& prompt) {
             if (c == 'y' || c == 'Y') return true;
             if (c == 'n' || c == 'N') return false;
         }
-        if (ev->key == Key::Enter) return false;  // default N
+        if (ev->key == Key::Enter) return false;  // default is N
         if (ev->key == Key::CtrlC || ev->key == Key::Escape) return false;
-        if (ev->key == Key::CtrlQ) return false;  // must never be swallowed
+        if (ev->key == Key::CtrlQ) return false;  // never swallow Ctrl-Q
     }
 }
 

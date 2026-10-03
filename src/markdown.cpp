@@ -100,8 +100,8 @@ std::vector<Inline> parse_inlines(const std::string& s) {
             buf.clear();
         }
     };
-    // A span of text can be wrapped in emphasis only when it neither starts
-    // nor ends with whitespace ("2 * 3 * 4" must stay literal).
+    // Emphasis wraps only text with no leading/trailing whitespace, so
+    // "2 * 3 * 4" stays literal.
     auto flanked = [](const std::string& inner) {
         return !inner.empty() && inner.front() != ' ' && inner.front() != '\t' &&
                inner.front() != '\n' && inner.back() != ' ' && inner.back() != '\t' &&
@@ -152,9 +152,8 @@ std::vector<Inline> parse_inlines(const std::string& s) {
                 flush();
                 Inline in;
                 in.kind = Inline::Code;
-                // Optional language hint: "```python code```" or "`python: code`".
-                // Only split when the leading token is a known language, so
-                // ordinary code like `a: b` is left untouched.
+                // Optional language hint ("`python: code`"). Split only when
+                // the leading token is a known language, so `a: b` is literal.
                 size_t sep = content.find_first_of(": \t");
                 if (sep != npos && sep > 0) {
                     std::string lang = content.substr(0, sep);
@@ -723,9 +722,8 @@ void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
             case Inline::Strong: render_inlines(x.children, s, style | BOLD); break;
             case Inline::Strike: render_inlines(x.children, s, style | STRIKE); break;
             case Inline::Code:
-                // A language-tagged inline span (inside a table cell or a
-                // paragraph) is highlighted with the code lexer, one source
-                // line at a time so multi-line snippets keep comment state.
+                // Language-tagged inline spans are highlighted line by line so
+                // multi-line snippets keep their comment state.
                 if (!x.lang.empty()) {
                     bool in_block = false;
                     std::string rest = x.text;
@@ -759,7 +757,7 @@ void render_inlines(const std::vector<Inline>& in, WrapState& s, int style) {
 using detail::LangProfile;
 
 // Lower-case the fence info string and resolve it via the embedded keyword
-// data. Unknown languages return nullptr (rendered as a plain code block).
+// data; nullptr = unknown (rendered as plain code).
 const LangProfile* lang_profile(const std::string& raw) {
     std::string l = raw;
     for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -776,11 +774,10 @@ bool in_list(const std::vector<std::string>& v, std::string w, bool ci) {
     return std::find(v.begin(), v.end(), w) != v.end();
 }
 
-// Tokenize one line of code into styled spans. Identifier classification:
-// keyword > constant > type > builtin > function (followed by '(') > variable.
-// in_block carries the multi-line comment state across lines: true means the
-// line starts inside a block comment, and it is updated to reflect how the line
-// ends.
+// Tokenize one code line into styled spans. Identifier class order:
+// keyword > constant > type > builtin > function('(') > variable. in_block
+// carries block-comment state across lines; it is read on entry and updated to
+// the state at line end.
 Line highlight(const std::string& line, const std::string& lang, bool& in_block) {
     Line out;
     const LangProfile* p = lang_profile(lang);
@@ -898,9 +895,8 @@ Line highlight(const std::string& line, const std::string& lang, bool& in_block)
             at_line_start = false;
             continue;
         }
-        // Operators and punctuation, but never swallow the start of a block
-        // comment opener (e.g. HTML "<!--" would otherwise be eaten as a run
-        // of operator characters).
+        // Operators/punctuation, but never swallow a block-comment opener
+        // (e.g. HTML "<!--" would otherwise be eaten as an operator run).
         static const std::string ops = "+-*/%=<>!&|^~?:.#@";
         if (ops.find(c) != std::string::npos) {
             size_t j = i;
@@ -1066,9 +1062,8 @@ void render_block(const Block& b, int width, Lines& out) {
                         pos += l;
                         ++cnt;
                     }
-                    // Only the first chunk of a source line continues the
-                    // previous line's comment state; wrapped continuation
-                    // chunks are treated as fresh line text.
+                    // Only the first wrap chunk continues the previous line's
+                    // comment state; continuation chunks are fresh text.
                     bool carry = first_chunk && in_block;
                     out.push_back(highlight(chunk, b.lang, carry));
                     if (first_chunk) in_block = carry;

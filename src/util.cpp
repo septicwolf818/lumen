@@ -108,9 +108,8 @@ std::optional<fs::path> resolve_safe_path(const fs::path& cwd,
             fs::path base = fs::weakly_canonical(cwd);
             auto pstr = p.string();
             auto bstr = base.string();
-            // Must be exactly base or base + '/' + something: a plain prefix
-            // match would let "/work/app-evil" in through base "/work/app",
-            // and indexing past the end of a shorter pstr is undefined.
+            // Must be base itself or base + '/...': a bare prefix match would
+            // admit a sibling like "/work/app-evil" under base "/work/app".
             bool under = pstr.size() >= bstr.size() &&
                          pstr.compare(0, bstr.size(), bstr) == 0;
             if (under && pstr.size() > bstr.size() && bstr.back() != '/' &&
@@ -159,8 +158,7 @@ std::string shell_escape(const std::string& s) {
 }
 
 bool no_color() {
-    // Read once: NO_COLOR does not change while the program runs.
-    static const bool set = [] {
+    static const bool set = [] {  // read once: NO_COLOR never changes at runtime
         const char* v = std::getenv("NO_COLOR");
         return v != nullptr && *v != '\0';
     }();

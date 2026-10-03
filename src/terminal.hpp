@@ -18,11 +18,9 @@ public:
     // Restore original settings
     void restore();
 
-    // Alternate screen buffer (DECSET/DECRST 1049): the session is drawn on
-    // the alt buffer so leave_alt_screen() can restore the console content
-    // that was on screen before lumen started. Plain sequences only - what a
-    // Linux VT understands; older kernels ignore them and the UI's exit dump
-    // rebuilds the screen instead.
+    // Alternate screen buffer (DECSET/DECRST 1049): lets leave_alt_screen()
+    // restore the console content that preceded lumen. Ignored by older
+    // kernels, where the UI's exit dump rebuilds the screen instead.
     void enter_alt_screen();
     void leave_alt_screen();
 

@@ -12,8 +12,8 @@
 
 namespace {
 
-// Why a file path cannot be opened. Empty string means "exists, not a
-// directory" - the caller's open() decides the rest.
+// Reason a file path cannot be opened; "" means "exists, not a directory"
+// (the caller's open() decides the rest).
 std::string file_reason(const std::string& p) {
     std::error_code ec;
     auto st = fs::status(p, ec);
@@ -26,7 +26,7 @@ std::string file_reason(const std::string& p) {
     return "";
 }
 
-// Why a directory path cannot be listed. Empty string means "is a directory".
+// Reason a directory cannot be listed; "" means "is a directory".
 std::string dir_reason(const std::string& p) {
     std::error_code ec;
     auto st = fs::status(p, ec);
@@ -162,8 +162,8 @@ std::string ToolRunner::path_denied(const std::string& user_path) const {
 ToolResult ToolRunner::run(const std::string& name,
                            const nlohmann::json& arguments,
                            std::function<bool(const std::string& prompt)> confirm_fn) {
-    // Validate before prompting: asking "Execute foo?" for a tool that does
-    // not exist wastes a confirmation on a call that cannot run.
+    // Validate before prompting: confirming a nonexistent tool would waste a
+    // prompt on a call that cannot run.
     bool known = name == "read_file" || name == "write_file" || name == "edit_file" ||
                  name == "list_directory" || name == "execute" || name == "search";
     if (!known) {
@@ -174,8 +174,8 @@ ToolResult ToolRunner::run(const std::string& name,
 
     bool readonly = is_readonly(name);
     if (!readonly && !cfg_.auto_approve_tools) {
-        // The caller already prints the tool name and arguments to the
-        // scrollback, so the prompt only needs the question itself.
+    // The caller already prints the tool name and arguments, so the prompt is
+    // just the question.
         std::string prompt = "Execute " + name + "? [y/N] ";
         if (!confirm_fn || !confirm_fn(prompt)) {
             return {false, "Cancelled by user."};
@@ -190,13 +190,12 @@ ToolResult ToolRunner::run(const std::string& name,
     else if (name == "execute") r = execute(arguments);
     else r = search(arguments);
 
-    // Always sanitize before returning — execute/search can emit arbitrary bytes
+    // execute/search can emit arbitrary bytes: always sanitize first.
     r.output = util::sanitize_utf8(r.output);
     if (r.output.size() > cfg_.max_tool_output_bytes) {
         r.output = util::truncate(r.output, cfg_.max_tool_output_bytes);
         r.output = util::sanitize_utf8(r.output);
     }
-    // Make failures unmistakable for the model (and the UI)
     if (!r.ok && r.output.rfind("ERROR:", 0) != 0) r.output = "ERROR: " + r.output;
     return r;
 }
@@ -232,8 +231,8 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
     if (!in) return {false, os_error("cannot open", *sp)};
 
     if (paging) {
-        // Line-based slice: stream with getline and stop at the limit, so
-        // huge files stay cheap to page through.
+        // Stream with getline and stop at the limit so paging huge files is
+        // cheap.
         char sample[8192];
         in.read(sample, sizeof(sample));
         std::string head(sample, static_cast<size_t>(in.gcount()));
@@ -261,8 +260,7 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
                                (lineno == 1 ? " line)" : " lines)")};
         }
 
-        // Total line count if we reached EOF (or stopped exactly at it).
-        long total = -1;
+        long total = -1;  // known only if we hit EOF
         if (static_cast<long>(lines.size()) < limit || limit == 0) {
             total = lineno;  // getline ran out
         } else {
@@ -311,15 +309,11 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
                     "Use execute with hexdump/od/file if you need binary inspection."};
     }
 
-    // Ensure content is valid UTF-8 for JSON / Ollama
-    std::string text = util::sanitize_utf8(buf);
+    std::string text = util::sanitize_utf8(buf);  // valid UTF-8 for JSON/Ollama
     if (truncated) {
         text += "\n[output truncated at " + std::to_string(cfg_.max_file_bytes) + " bytes]\n";
     }
-    if (!util::is_valid_utf8(text)) {
-        // sanitize should always produce valid UTF-8; belt-and-suspenders
-        text = util::sanitize_utf8(text);
-    }
+    if (!util::is_valid_utf8(text)) text = util::sanitize_utf8(text);  // belt-and-braces
     return {true, text};
 }
 
@@ -410,8 +404,8 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     std::string why = dir_reason(*sp);
     if (!why.empty()) return {false, why};
 
-    // Prefix entries with the path that was asked for, so the results can be
-    // passed straight to read_file/edit_file without losing the directory.
+    // Prefix entries with the requested path so results can be passed straight
+    // to read_file/edit_file.
     std::string prefix;
     if (path != "." && path != "./" && path != "/") {
         prefix = path;
@@ -422,8 +416,8 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     std::ostringstream out;
     out << "Listing " << path << ":\n";
     std::vector<std::string> entries;
-    // Manual iteration with ec: the throwing overloads (is_directory() and
-    // range-for increment) would terminate on a stat error mid-listing.
+    // Manual iteration with ec: the throwing overloads would terminate on a
+    // stat error mid-listing.
     fs::directory_iterator it(*sp, ec);
     if (ec) return {false, "cannot list " + *sp + ": " + ec.message()};
     for (fs::directory_iterator end; it != end; it.increment(ec)) {
@@ -445,7 +439,7 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     if (!args["command"].is_string()) return {false, "argument \"command\" must be a string"};
     std::string cmd = args["command"].get<std::string>();
 
-    // Run via /bin/sh -c in cwd, capture stdout+stderr, limit output
+    // /bin/sh -c in cwd, stdout+stderr captured, output capped.
     int pipefd[2];
     if (pipe(pipefd) != 0)
         return {false, std::string("pipe failed: ") + std::strerror(errno)};
@@ -457,7 +451,7 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
         return {false, std::string("fork failed: ") + std::strerror(e)};
     }
     if (pid == 0) {
-        // child - only async-signal-safe calls from here on
+        // child: async-signal-safe calls only from here on
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
@@ -478,8 +472,8 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     size_t limit = cfg_.max_tool_output_bytes;
     while (output.size() < limit) {
         ssize_t n = read(pipefd[0], buf, sizeof(buf));
-        // Signals are installed without SA_RESTART, so resize/Ctrl-C makes read
-        // fail with EINTR - that is not EOF, retry instead of cutting output.
+        // Signals lack SA_RESTART, so resize/Ctrl-C fails read with EINTR -
+        // not EOF, so retry rather than cut output short.
         if (n < 0 && errno == EINTR) continue;
         if (n <= 0) break;
         size_t take = std::min(static_cast<size_t>(n), limit - output.size());
@@ -487,17 +481,17 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     }
     close(pipefd[0]);
     int status = 0;
-    // Same reason: retry until the child is really reaped. Giving up here
-    // would leave a zombie and status 0 would report a failure as success.
+    // Retry until the child is reaped: giving up would leave a zombie and let
+    // status 0 misreport a failure as success.
     pid_t w;
     while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
     }
     if (w < 0) {
-        // status was never filled in - reporting it would claim success
+        // status was never filled in; reporting it would claim success.
         return {false, std::string("waitpid failed: ") + std::strerror(errno)};
     }
-    // Reaching the limit closes the pipe under the child (SIGPIPE, reported by
-    // the shell as 141), so the exit status is our doing and not a failure.
+    // Hitting the limit closes the pipe under the child (SIGPIPE, reported as
+    // 141), so that exit status is our doing, not a failure.
     bool truncated = output.size() >= limit;
     if (truncated) output += "\n[output truncated]\n";
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -528,9 +522,8 @@ ToolResult ToolRunner::search(const nlohmann::json& args) {
     if (!fs::exists(*sp, ec) || ec)
         return {false, "search path does not exist: " + *sp};
 
-    // Prefer rg, fall back to grep -r. Exit code 1 means "no matches", which is
-    // a normal result, so normalize it to 0; any other failure stays an error.
-    // probe PATH at run time - rg is not always in /usr/bin (homebrew, etc.)
+    // Prefer rg, fall back to grep -r (probed at run time; rg is not always in
+    // /usr/bin). Exit code 1 = "no matches", a normal result, normalized to 0.
     std::string root = *sp;
     std::error_code rec;
     fs::path rel = fs::relative(*sp, fs::weakly_canonical(cwd_), rec);
@@ -549,8 +542,7 @@ ToolResult ToolRunner::search(const nlohmann::json& args) {
                       " || [ $? -eq 1 ]; else "
                       "grep -rnH --max-count=50 -E " + pat + " " + rt +
                       " || [ $? -eq 1 ]; fi";
-    // reuse execute logic but without extra confirm
-    nlohmann::json a;
+    nlohmann::json a;  // reuse the execute path (no extra confirmation)
     a["command"] = cmd;
     auto r = execute(a);
     if (r.ok && r.output == "(no output)")

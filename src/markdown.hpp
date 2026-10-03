@@ -3,17 +3,17 @@
 #include <string>
 #include <vector>
 
-// A small, self-contained Markdown subset parser and renderer.
+// Self-contained Markdown subset parser and renderer.
 //
-// It parses into a block/inline tree and renders it to a list of styled visual
-// lines that fit a given width. Styles are semantic; the UI maps them onto the
-// attributes the Linux console supports. Rendering is deliberately plain: no
-// HTML, no reference links, single-level lists, table columns may be trimmed.
+// Parses into a block/inline tree and renders styled visual lines that fit a
+// width. Styles are semantic; the UI maps them onto console attributes.
+// Deliberately plain: no HTML, no reference links, single-level lists, table
+// columns may be trimmed.
 //
-// Supported blocks:  paragraph, ATX heading, fenced code, blockquote,
-//                    unordered/ordered list, table (GFM), thematic break.
-// Supported inlines: text, emphasis, strong, strikethrough, code span,
-//                    link/image, autolink, hard break.
+// Blocks:   paragraph, ATX heading, fenced code, blockquote, unordered/ordered
+//           list, table (GFM), thematic break.
+// Inlines:  text, emphasis, strong, strikethrough, code span, link/image,
+//           autolink, hard break.
 
 namespace md {
 

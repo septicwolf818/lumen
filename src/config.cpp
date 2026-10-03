@@ -16,8 +16,7 @@ void Config::load() {
         }
     }
 
-    // Environment overrides the URL from the file - applied after the load,
-    // otherwise the file value always wins and the override never works.
+    // Env overrides the file value, so it must run after from_json().
     auto env_url = [this](const char* name) {
         const char* env = std::getenv(name);
         if (!env || !*env) return;
@@ -53,7 +52,7 @@ nlohmann::json Config::to_json() const {
 }
 
 void Config::from_json(const nlohmann::json& j) {
-    // Negative numbers would wrap to absurd size_t limits when converted.
+    // Clamp negatives, which would wrap to huge size_t values.
     auto usize = [](const nlohmann::json& v, size_t def) -> size_t {
         if (!v.is_number_integer()) return def;
         int64_t n = v.get<int64_t>();

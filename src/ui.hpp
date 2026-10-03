@@ -8,18 +8,14 @@
 #include <vector>
 #include <deque>
 
-// Simple scrollback + status + input line UI.
-// Layout:
-//   row 1: status (model / session / cwd)
+// Scrollback + status + input line UI.
+//   row 1:      status (model / session / cwd)
 //   rows 2..H-2: conversation viewport
-//   row H-1: separator / scroll indicator
-//   row H: input line
+//   row H-1:    separator / scroll indicator
+//   row H:      input line
 
-// Line styles for scrollback: a bitmask so a line can carry bold/dim plus one
-// colour. Deliberately limited to the SGR attributes we emit - bold, dim and
-// the basic foreground colours 31-36 (black and white are never needed) -
-// all rendered by the Linux console (TERM=linux), so no 256-colour (38;5;n)
-// or truecolor (38;2;r;g;b) sequences are emitted.
+// Per-line style bitmask. Limited to attributes the Linux console renders:
+// bold, dim and the basic foreground colours 31-36 (no 256-colour/truecolor).
 // STYLE_DIM == 1, so append(text, 1) callers keep their old meaning.
 enum UiStyle : int {
     STYLE_NORMAL    = 0,
@@ -98,8 +94,7 @@ public:
     void redraw();
     void on_resize();
 
-    // Exit path: reprint the conversation that is on screen (plain Linux
-    // console sequences) and print the farewell line for the shell.
+    // Exit path: reprint the on-screen conversation, then the farewell line.
     void dump_screen();
     void farewell();
 
@@ -112,9 +107,9 @@ public:
     // Queued messages waiting for the current response to finish
     void set_queue(size_t n) { queue_count_ = n; }
 
-    // Working indicator: RAII-style depth counter, so nested generation /
-    // tool / compaction frames keep the spinner up until the outermost one
-    // finishes. The separator row shows a |/-\ frame instead of "---".
+    // Working indicator: depth-counted, so nested generation/tool/compaction
+    // frames keep the spinner up until the outermost finishes. The separator
+    // row shows a |/-\ frame instead of "---".
     void set_working(bool w);
     void tick_spinner();  // advance the frame (throttled) and redraw
     void tick_marquee();

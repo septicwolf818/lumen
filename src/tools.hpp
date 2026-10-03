@@ -22,10 +22,10 @@ public:
     void set_cwd(const std::string& cwd) { cwd_ = cwd; }
     const std::string& cwd() const { return cwd_; }
 
-    // Returns true if tool is read-only (no confirm needed)
+    // True if the tool is read-only (no confirmation needed).
     static bool is_readonly(const std::string& name);
 
-    // Execute a tool call. confirm_fn called if needs confirmation; return false to cancel.
+    // Run a tool call. confirm_fn is called when needed; false cancels it.
     ToolResult run(const std::string& name,
                    const nlohmann::json& arguments,
                    std::function<bool(const std::string& prompt)> confirm_fn);

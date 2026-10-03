@@ -10,8 +10,7 @@ void InputReader::push_byte(unsigned char c) {
 }
 
 std::optional<KeyEvent> InputReader::poll() {
-    // Read whatever is available
-    unsigned char tmp[64];
+    unsigned char tmp[64];  // drain whatever bytes are ready
     for (;;) {
         ssize_t n = ::read(STDIN_FILENO, tmp, sizeof(tmp));
         if (n > 0) {
@@ -29,8 +28,8 @@ std::optional<KeyEvent> InputReader::read(int timeout_ms) {
         if (ev) return ev;
 
         if (eof_) {
-            // stdin is gone: poll reports POLLHUP immediately, so without
-            // this guard the caller would spin at 100% CPU. Pace instead.
+            // stdin is gone: poll returns POLLHUP at once, so without this
+            // pace the caller spins at 100% CPU.
             if (timeout_ms > 0) usleep(static_cast<useconds_t>(timeout_ms) * 1000);
             else if (timeout_ms < 0) usleep(100 * 1000);
             return std::nullopt;
@@ -57,7 +56,6 @@ std::optional<KeyEvent> InputReader::read(int timeout_ms) {
             eof_ = true;
             return try_parse();
         }
-        // if timeout_ms >= 0 and we already waited, loop once more to parse
         if (timeout_ms == 0) return try_parse();
     }
 }
@@ -67,8 +65,7 @@ std::optional<KeyEvent> InputReader::try_parse() {
 
     unsigned char c = static_cast<unsigned char>(buf_[0]);
 
-    // Ctrl keys (ASCII 1-26) when not part of escape
-    if (c < 32 && c != 0x1b && c != '\t' && c != '\n' && c != '\r') {
+    if (c < 32 && c != 0x1b && c != '\t' && c != '\n' && c != '\r') {  // Ctrl keys
         KeyEvent ev;
         ev.raw = buf_.substr(0, 1);
         buf_.erase(0, 1);
@@ -94,8 +91,7 @@ std::optional<KeyEvent> InputReader::try_parse() {
         ev.key = Key::Enter;
         ev.raw = buf_.substr(0, 1);
         buf_.erase(0, 1);
-        // swallow CR LF pair
-        if (c == '\r' && !buf_.empty() && buf_[0] == '\n') buf_.erase(0, 1);
+        if (c == '\r' && !buf_.empty() && buf_[0] == '\n') buf_.erase(0, 1);  // CRLF
         return ev;
     }
 
@@ -119,8 +115,7 @@ std::optional<KeyEvent> InputReader::try_parse() {
         return parse_escape();
     }
 
-    // Printable ASCII (and start of UTF-8 – we treat multi-byte as single Char events
-    // by consuming one UTF-8 character)
+    // Printable ASCII, or one whole UTF-8 character as a single Char event.
     if (c >= 32) {
         size_t len = 1;
         if ((c & 0xE0) == 0xC0) len = 2;
@@ -131,7 +126,6 @@ std::optional<KeyEvent> InputReader::try_parse() {
         KeyEvent ev;
         ev.key = Key::Char;
         ev.raw = buf_.substr(0, len);
-        // Decode one UTF-8 sequence into a codepoint (enough for editing).
         if (len == 1) {
             ev.codepoint = c;
         } else {
@@ -154,8 +148,7 @@ std::optional<KeyEvent> InputReader::try_parse() {
         return ev;
     }
 
-    // unknown control
-    KeyEvent ev;
+    KeyEvent ev;  // unknown control byte
     ev.key = Key::Unknown;
     ev.raw = buf_.substr(0, 1);
     buf_.erase(0, 1);
@@ -163,14 +156,10 @@ std::optional<KeyEvent> InputReader::try_parse() {
 }
 
 std::optional<KeyEvent> InputReader::parse_escape() {
-    // Need at least ESC
     if (buf_.size() < 1) return std::nullopt;
 
-    // Lone ESC (or ESC timeout) – if only ESC and no more data yet, wait a bit?
-    // For simplicity: if we have only ESC, treat as Escape after a short wait
-    // is handled by the caller polling. Here if more bytes arrive we parse CSI.
+    // A lone ESC is reported as Escape; longer sequences parse as CSI below.
     if (buf_.size() == 1) {
-        // Could be lone Escape – return it so UI can react
         KeyEvent ev;
         ev.key = Key::Escape;
         ev.raw = buf_;
@@ -196,8 +185,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
             buf_.erase(0, 4);
             return ev;
         }
-        // Find final byte (0x40-0x7E)
-        size_t i = 2;
+        size_t i = 2;  // CSI final byte is 0x40-0x7E
         while (i < buf_.size()) {
             unsigned char ch = static_cast<unsigned char>(buf_[i]);
             if (ch >= 0x40 && ch <= 0x7E) {
@@ -206,9 +194,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
                 KeyEvent ev;
                 ev.raw = seq;
 
-                // Parse common sequences
-                // ESC [ A/B/C/D
-                if (seq.size() == 3) {
+                if (seq.size() == 3) {  // ESC [ A/B/C/D ...
                     switch (seq[2]) {
                         case 'A': ev.key = Key::Up; return ev;
                         case 'B': ev.key = Key::Down; return ev;
@@ -219,8 +205,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
                         default: break;
                     }
                 }
-                // ESC [ n ~
-                if (seq.back() == '~') {
+                if (seq.back() == '~') {  // ESC [ n ~
                     std::string mid = seq.substr(2, seq.size() - 3);
                     if (mid == "1" || mid == "7") { ev.key = Key::Home; return ev; }
                     if (mid == "4" || mid == "8") { ev.key = Key::End; return ev; }
@@ -241,8 +226,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
                     if (mid == "23") { ev.key = Key::F11; return ev; }
                     if (mid == "24") { ev.key = Key::F12; return ev; }
                 }
-                // ESC [ 1 ; 5 A  etc (modifiers) – ignore modifiers for now
-                if (seq.find(';') != std::string::npos) {
+                if (seq.find(';') != std::string::npos) {  // ESC [ 1;5A: drop modifiers
                     char final = seq.back();
                     if (final == 'A') { ev.key = Key::Up; return ev; }
                     if (final == 'B') { ev.key = Key::Down; return ev; }
@@ -256,9 +240,9 @@ std::optional<KeyEvent> InputReader::parse_escape() {
             }
             ++i;
         }
-        // Incomplete escape sequence: keep buffering for the next read.
+        // Incomplete sequence: buffer for the next read, but give up if it
+        // grows absurd.
         if (buf_.size() > 16) {
-            // give up
             KeyEvent ev;
             ev.key = Key::Escape;
             ev.raw = buf_.substr(0, 1);
@@ -268,8 +252,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
         return std::nullopt;
     }
 
-    // ESC O P/Q/R/S  (SS3 – F1-F4 on some terminals)
-    if (buf_[1] == 'O' && buf_.size() >= 3) {
+    if (buf_[1] == 'O' && buf_.size() >= 3) {  // SS3: ESC O P/Q/R/S
         KeyEvent ev;
         ev.raw = buf_.substr(0, 3);
         switch (buf_[2]) {
@@ -285,8 +268,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
         return ev;
     }
 
-    // Alt+key: ESC + char
-    if (buf_.size() >= 2 && static_cast<unsigned char>(buf_[1]) >= 32) {
+    if (buf_.size() >= 2 && static_cast<unsigned char>(buf_[1]) >= 32) {  // Alt+key
         KeyEvent ev;
         ev.key = Key::Char;
         ev.alt = true;
@@ -296,8 +278,7 @@ std::optional<KeyEvent> InputReader::parse_escape() {
         return ev;
     }
 
-    // fallback
-    KeyEvent ev;
+    KeyEvent ev;  // fallback: bare Escape
     ev.key = Key::Escape;
     ev.raw = buf_.substr(0, 1);
     buf_.erase(0, 1);

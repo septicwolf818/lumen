@@ -7,10 +7,9 @@ Usage:
 Upstream: https://github.com/radosslav/languages-keywords
   Source: MIT, compiled data: CC-BY-4.0 (see NOTICE / README).
 
-The upstream lists carry some non-identifier tokens ("array()", "as?", "!in",
-"@interface", "..."). This script strips the decoration so only things our
-identifier-based lexer can match are kept, and layers on the types, constants
-and builtins that our highlighter uses (which are not keywords).
+Upstream lists carry non-identifier tokens ("array()", "as?", "!in",
+"@interface", "..."). This strips the decoration to identifiers our lexer can
+match, and layers on the types/constants/builtins the highlighter uses.
 """
 import json
 import os
@@ -20,14 +19,12 @@ import urllib.request
 
 DEFAULT_URL = ("https://raw.githubusercontent.com/radosslav/languages-keywords/"
                "main/README.md")
-# Committed snapshot of the upstream README, used when the network is
-# unavailable so regeneration stays reproducible offline. The generated
-# data/keywords.json is itself committed, so the program never depends on this
-# at build or run time.
+# Committed upstream README snapshot used when the network is unavailable, so
+# regeneration stays reproducible offline. Never needed at build or run time.
 SNAPSHOT = os.path.join(os.path.dirname(__file__), "..", "data", "upstream-keywords.md")
 
-# Which upstream heading maps to our profile name; the last matching section
-# wins (so C++20 / Python 3.10 / Java 17 are used).
+# Upstream heading -> our profile name; the last matching section wins (so
+# C++20 / Python 3.10 / Java 17 are used).
 SECTION_TO_PROFILE = {
     "C++": "cpp",
     "C": "c",
@@ -53,8 +50,8 @@ SECTION_TO_PROFILE = {
     "Objective-C": "objc",
 }
 
-# Identifier-safe cleanup: drop trailing "()" and leading/trailing decoration
-# that our lexer cannot tokenize; keep the bare word.
+# Identifier-safe cleanup: strip "()" and leading/trailing decoration the
+# lexer cannot tokenize; keep the bare word.
 def clean(token):
     t = token.strip()
     t = re.sub(r"\(\)$", "", t)          # array() -> array, die() -> die
@@ -122,8 +119,7 @@ SYNTAX = {
     "json":       {"line": "",   "bopen": "",    "bclose": "",    "ci": False, "hash": False},
 }
 
-# Extra per-language layers that are not keywords. Kept intentionally small and
-# maintained here; the keyword lists come from upstream.
+# Extra per-language layers that are not keywords; keyword lists come upstream.
 TYPES = {
     "cpp": ["void","bool","char","char8_t","char16_t","char32_t","short","int","long",
             "float","double","signed","unsigned","size_t","ssize_t","wchar_t",
@@ -290,7 +286,7 @@ def parse_upstream(text):
     return out
 
 
-# Languages not present upstream (or needing a markup profile), curated here.
+# Languages absent upstream (or needing a markup profile), curated here.
 # Keywords only; comment markers come from SYNTAX.
 EXTRA_LANGUAGES = {
     "zig": {

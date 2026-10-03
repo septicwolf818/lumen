@@ -13,12 +13,9 @@ struct Config {
     size_t max_file_bytes = 262144;
     size_t max_tool_output_bytes = 65536;
     size_t max_history_messages = 200;
-    // Compact automatically when estimated context reaches this percentage of
-    // the context window (10-99). The window comes from Ollama /api/ps unless
-    // context_limit overrides it.
     bool auto_compact = true;
-    size_t compaction_threshold = 80;
-    size_t context_limit = 0;  // 0 = detect from Ollama (/api/ps)
+    size_t compaction_threshold = 80;  // percent of window that triggers it
+    size_t context_limit = 0;          // 0 = detect from Ollama (/api/ps)
     std::string last_session;
 
     void load();
