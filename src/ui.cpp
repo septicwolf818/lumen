@@ -168,7 +168,19 @@ int map_md_style(int st, bool dim = false) {
     if (st & md::SYN_PREPROC) r |= STYLE_BOLD | STYLE_GREEN;
     if (st & md::SYN_ATTRIBUTE) r |= STYLE_YELLOW | STYLE_BOLD;
 
-    if (dim) r |= STYLE_DIM;
+    // Thinking: keep the full syntax highlight but make it read as recessed.
+    // SGR 2 cannot be used here: on the Linux console faint overrides the
+    // foreground colour (everything turns grey), so instead drop bold from
+    // coloured tokens - that shifts them from bright to normal colours - and
+    // dim only the uncoloured text.
+    if (dim) {
+        const int colored = STYLE_RED | STYLE_GREEN | STYLE_YELLOW | STYLE_BLUE |
+                            STYLE_MAGENTA | STYLE_CYAN | STYLE_REVERSE;
+        if (r & colored)
+            r &= ~(STYLE_BOLD | STYLE_DIM);
+        else
+            r |= STYLE_DIM;
+    }
     return r;
 }
 
