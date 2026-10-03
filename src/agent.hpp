@@ -99,4 +99,6 @@ private:
     void load_session(const std::string& name);
     std::vector<nlohmann::json> build_messages() const;
     std::string system_prompt() const;
+    // Keep the stored system message's working directory in step with the tools.
+    void refresh_cwd_prompt();
 };

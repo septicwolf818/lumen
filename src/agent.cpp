@@ -85,6 +85,21 @@ std::string Agent::system_prompt() const {
         "Do not invent file contents; read them first.";
 }
 
+// The system prompt names the working directory, so a cd has to rewrite the
+// stored copy: left stale, the model keeps prefixing paths with the old
+// directory and the tools reject them as escapes. Only the one line is
+// replaced, so a session prompt shaped by an older build stays intact.
+void Agent::refresh_cwd_prompt() {
+    if (session_.messages.empty() || session_.messages[0].role != Role::System) return;
+    const std::string key = "Working directory: ";
+    std::string& s = session_.messages[0].content;
+    size_t at = s.find(key);
+    if (at == std::string::npos) return;  // unexpected shape; leave it alone
+    size_t eol = s.find('\n', at);
+    if (eol == std::string::npos) return;
+    s.replace(at, eol - at + 1, key + tools_->cwd() + "\n");
+}
+
 void Agent::init_session() {
     if (!cfg_.last_session.empty()) {
         auto s = Session::load(cfg_.last_session);
@@ -100,6 +115,7 @@ void Agent::init_session() {
                                 STYLE_YELLOW);
                 }
             }
+            refresh_cwd_prompt();  // prompt must name the cwd actually in use
             for (const auto& m : session_.messages) replay_message(m);
             update_status();
             maybe_generate_title();  // auto-named sessions get an AI title
@@ -345,6 +361,8 @@ void Agent::load_session(const std::string& name) {
             ui_.message("Session cwd is gone, keeping " + tools_->cwd(), STYLE_YELLOW);
         }
     }
+    refresh_cwd_prompt();  // a session stored with a different cwd must not keep it
+    save_session(false);
     cfg_.last_session = session_.name;
     cfg_.save();
     ui_.clear_conversation();
@@ -628,7 +646,9 @@ void Agent::handle_command(const std::string& line) {
         }
         tools_->set_cwd(sp->string());
         session_.cwd = sp->string();
+        refresh_cwd_prompt();
         update_status();
+        save_session(false);  // persist the new cwd even if no turn follows
         ui_.message("cwd: " + sp->string());
     } else if (cmd == "/pwd") {
         ui_.message(tools_->cwd());
