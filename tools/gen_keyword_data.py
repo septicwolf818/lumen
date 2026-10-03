@@ -815,6 +815,35 @@ EXTRA_LANGUAGES = {
                   "unit","obj","list","array","seq","option","Result","Map","Set"],
         "constants": ["true","false","None","Some","Ok","Error"],
     },
+    "bash": {
+        "aliases": ["bash","sh","shell","zsh"],
+        "keywords": ["if","then","elif","else","fi","case","esac","for","while","until","do",
+                     "done","in","function","select","time","coproc","break","continue",
+                     "return","exit","local","declare","typeset","export","readonly","shift",
+                     "unset","let","eval","exec","source","alias","unalias","trap","wait",
+                     "getopts","set","enable","mapfile","readarray"],
+        "builtins": BUILTINS["bash"],
+    },
+    "sql": {
+        "aliases": ["sql"],
+        "keywords": ["select","from","where","insert","into","values","update","set","delete",
+                     "create","alter","drop","truncate","table","view","index","database",
+                     "schema","join","inner","left","right","full","outer","cross","on","using",
+                     "group","by","order","having","limit","offset","union","all","distinct",
+                     "as","and","or","not","in","exists","between","like","ilike","is","null",
+                     "case","when","then","else","end","with","recursive","primary","foreign",
+                     "key","references","constraint","unique","check","default","cascade",
+                     "asc","desc","begin","commit","rollback","transaction","grant","revoke",
+                     "if","replace","returning","over","partition","window","filter","lateral",
+                     "natural","add","column","rename","to"],
+        "types": ["int","integer","smallint","bigint","decimal","numeric","real","float",
+                  "double","precision","char","varchar","text","date","time","timestamp",
+                  "interval","boolean","bool","blob","clob","json","jsonb","uuid","serial",
+                  "bigserial","money","bytea"],
+        "constants": ["null","true","false","current_date","current_time",
+                      "current_timestamp"],
+        "builtins": BUILTINS["sql"],
+    },
     "nim": {
         "aliases": ["nim","nimble","nims"],
         "keywords": ["addr","and","as","asm","bind","block","break","case","cast","concept",
@@ -859,14 +888,9 @@ def build(upstream):
             entry["syntax"] = syntax_entry(profile)
         languages[profile] = entry
 
-    # Aliases that don't map to an upstream section (shell, json, yaml, sql).
-    extra = {
-        "bash": {"#{keywords}": []},
-        "json": {"#{keywords}": []},
-        "yaml": {"#{keywords}": []},
-        "sql": {"#{keywords}": []},
-    }
-    for name, tmpl in extra.items():
+    # Structured-data profiles have no keywords by nature; only their
+    # constants/syntax matter, so seed them without a keyword list.
+    for name in ("json", "yaml"):
         if name in languages:
             continue
         entry = {"aliases": ALIASES[name], "keywords": [], "syntax": syntax_entry(name)}
