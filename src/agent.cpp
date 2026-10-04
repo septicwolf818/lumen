@@ -1230,9 +1230,15 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
         for (const auto& l : tool_arg_lines(tc)) ui_.append(l);
         ui_.redraw();
 
+        // Build a tick_fn that pumps input so the UI stays responsive and
+        // Ctrl+C / abort detection still work during tool execution.
+        auto tick_fn = [this]() {
+            pump_input();  // reads keys, checks SIGINT/SIGTERM flags
+        };
+
         auto result = tools_->run(name, args, [this](const std::string& prompt) {
             return ui_.confirm(input_, prompt);
-        });
+        }, tick_fn);
 
         ui_.append("[result]", 1);
         std::string out = result.output;

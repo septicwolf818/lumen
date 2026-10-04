@@ -26,9 +26,12 @@ public:
     static bool is_readonly(const std::string& name);
 
     // Run a tool call. confirm_fn is called when needed; false cancels it.
+    // tick_fn, if provided, is called periodically during long-running tools
+    // so the caller can keep the UI alive (e.g. pump input, check abort).
     ToolResult run(const std::string& name,
                    const nlohmann::json& arguments,
-                   std::function<bool(const std::string& prompt)> confirm_fn);
+                   std::function<bool(const std::string& prompt)> confirm_fn,
+                   std::function<void()> tick_fn = nullptr);
 
 private:
     Config& cfg_;
@@ -38,8 +41,8 @@ private:
     ToolResult write_file(const nlohmann::json& args);
     ToolResult edit_file(const nlohmann::json& args);
     ToolResult list_directory(const nlohmann::json& args);
-    ToolResult execute(const nlohmann::json& args);
-    ToolResult search(const nlohmann::json& args);
+    ToolResult execute(const nlohmann::json& args, std::function<void()> tick_fn);
+    ToolResult search(const nlohmann::json& args, std::function<void()> tick_fn);
 
     std::optional<std::string> safe_path(const std::string& user_path);
     // Error text for a path that resolve_safe_path rejected
