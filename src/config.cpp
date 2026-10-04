@@ -43,6 +43,7 @@ nlohmann::json Config::to_json() const {
         {"markdown", markdown},
         {"max_file_bytes", max_file_bytes},
         {"max_tool_output_bytes", max_tool_output_bytes},
+        {"command_timeout", command_timeout},
         {"max_history_messages", max_history_messages},
         {"auto_compact", auto_compact},
         {"compaction_threshold", compaction_threshold},
@@ -72,6 +73,8 @@ void Config::from_json(const nlohmann::json& j) {
         max_file_bytes = usize(j["max_file_bytes"], max_file_bytes);
     if (j.contains("max_tool_output_bytes"))
         max_tool_output_bytes = usize(j["max_tool_output_bytes"], max_tool_output_bytes);
+    if (j.contains("command_timeout"))
+        command_timeout = usize(j["command_timeout"], command_timeout);
     if (j.contains("max_history_messages"))
         max_history_messages = usize(j["max_history_messages"], max_history_messages);
     if (j.contains("auto_compact") && j["auto_compact"].is_boolean())

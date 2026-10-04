@@ -12,6 +12,7 @@ struct Config {
     bool markdown = false;
     size_t max_file_bytes = 262144;
     size_t max_tool_output_bytes = 65536;
+    size_t command_timeout = 120;           // seconds for one execute call; 0 = no limit
     size_t max_history_messages = 200;
     bool auto_compact = true;
     size_t compaction_threshold = 80;  // percent of window that triggers it

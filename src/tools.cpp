@@ -7,10 +7,20 @@
 #include <csignal>
 #include <algorithm>
 #include <unistd.h>
+#include <poll.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 
 namespace {
+
+// Ceiling on a per-call timeout, so a model cannot ask execute() to hang for
+// hours; the config default is the usual budget and this only bounds overrides.
+constexpr int64_t kMaxCommandTimeoutSecs = 3600;
+
+// Upper bound on one poll() slice. The wait also ends on child exit, so this
+// only decides how coarsely a still-running child is re-checked, not how long
+// the caller waits past the command finishing.
+constexpr int kPollSliceMs = 50;
 
 // Reason a file path cannot be opened; "" means "exists, not a directory"
 // (the caller's open() decides the rest).
@@ -114,11 +124,13 @@ nlohmann::json tool_definitions() {
             {"type", "function"},
             {"function", {
                 {"name", "execute"},
-                {"description", "Run a shell command in the working directory. Prefer non-interactive commands."},
+                {"description", "Run a shell command in the working directory. Prefer non-interactive commands. A command still running when its timeout expires is killed."},
                 {"parameters", {
                     {"type", "object"},
                     {"properties", {
-                        {"command", {{"type", "string"}}}
+                        {"command", {{"type", "string"}}},
+                        {"timeout_seconds", {{"type", "integer"},
+                                             {"description", "Kill the command after this many seconds (default 120, max 3600). Raise it for slow builds or test suites."}}}
                     }},
                     {"required", nlohmann::json::array({"command"})}
                 }}
@@ -439,6 +451,20 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     if (!args["command"].is_string()) return {false, "argument \"command\" must be a string"};
     std::string cmd = args["command"].get<std::string>();
 
+    // Wall-clock budget. A per-call timeout_seconds wins over the config
+    // default; 0 in the config means no limit. It is a ceiling, never a delay:
+    // the wait below ends the moment the command is done, however much of the
+    // budget is left.
+    uint64_t budget_ms = 0;
+    int64_t secs = cfg_.command_timeout;
+    if (args.contains("timeout_seconds")) {
+        if (!args["timeout_seconds"].is_number_integer())
+            return {false, "argument \"timeout_seconds\" must be an integer"};
+        secs = args["timeout_seconds"].get<int64_t>();
+    }
+    if (secs > 0)
+        budget_ms = static_cast<uint64_t>(std::min(secs, kMaxCommandTimeoutSecs)) * 1000;
+
     // /bin/sh -c in cwd, stdout+stderr captured, output capped.
     int pipefd[2];
     if (pipe(pipefd) != 0)
@@ -452,6 +478,9 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
     }
     if (pid == 0) {
         // child: async-signal-safe calls only from here on
+        // Own process group, so the timeout can kill the whole tree. Killing
+        // only the shell would leave a backgrounded grandchild running.
+        setpgid(0, 0);
         close(pipefd[0]);
         dup2(pipefd[1], STDOUT_FILENO);
         dup2(pipefd[1], STDERR_FILENO);
@@ -466,33 +495,101 @@ ToolResult ToolRunner::execute(const nlohmann::json& args) {
         ssize_t w = ::write(STDOUT_FILENO, m, sizeof(m) - 1); (void)w;
         _exit(127);
     }
+    // Also set it here: whichever of parent and child gets there first, the
+    // group exists before the timeout can try to signal it. EACCES just means
+    // the child already exec'd, which is fine.
+    setpgid(pid, pid);
     close(pipefd[1]);
+
     std::string output;
     char buf[4096];
     size_t limit = cfg_.max_tool_output_bytes;
-    while (output.size() < limit) {
-        ssize_t n = read(pipefd[0], buf, sizeof(buf));
-        // Signals lack SA_RESTART, so resize/Ctrl-C fails read with EINTR -
-        // not EOF, so retry rather than cut output short.
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) break;
-        size_t take = std::min(static_cast<size_t>(n), limit - output.size());
-        output.append(buf, take);
-    }
-    close(pipefd[0]);
+    const uint64_t start = util::steady_ms();
+    bool timed_out = false;
+    bool truncated = false;
+    bool reaped = false;
     int status = 0;
-    // Retry until the child is reaped: giving up would leave a zombie and let
-    // status 0 misreport a failure as success.
-    pid_t w;
-    while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+
+    // Watch the pipe and the child together. poll() returns on whichever
+    // happens first, so a command that finishes early ends the wait at once
+    // instead of idling out the rest of its timeout.
+    for (;;) {
+        int slice = kPollSliceMs;
+        if (budget_ms) {
+            uint64_t elapsed = util::steady_ms() - start;
+            if (elapsed >= budget_ms) {
+                timed_out = true;
+                break;
+            }
+            slice = static_cast<int>(std::min<uint64_t>(budget_ms - elapsed,
+                                                        static_cast<uint64_t>(kPollSliceMs)));
+        }
+        // Once the child is reaped, only what is already buffered can arrive:
+        // poll non-blocking so the tail of its output is picked up without
+        // waiting on a write end a surviving grandchild may still hold open.
+        if (reaped) slice = 0;
+
+        struct pollfd pfd{};
+        pfd.fd = pipefd[0];
+        pfd.events = POLLIN;
+        int pr = ::poll(&pfd, 1, slice);
+        if (pr < 0) {
+            // Signals lack SA_RESTART, so resize/Ctrl-C fails poll with EINTR -
+            // not EOF, so retry rather than cut output short.
+            if (errno == EINTR) continue;
+            break;
+        }
+        // Child already reaped and nothing left buffered: its output is
+        // complete, so stop rather than spin on a zero-timeout poll.
+        if (reaped && (pr == 0 || !(pfd.revents & (POLLIN | POLLHUP | POLLERR)))) break;
+        if (pr > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+            ssize_t n = read(pipefd[0], buf, sizeof(buf));
+            if (n > 0) {
+                size_t take = std::min(static_cast<size_t>(n), limit - output.size());
+                output.append(buf, take);
+                if (output.size() >= limit) {
+                    truncated = true;
+                    break;
+                }
+            } else if (n == 0) {
+                break;  // EOF: the command closed its output
+            } else if (errno != EINTR && errno != EAGAIN) {
+                break;
+            }
+        }
+        // The child can exit while a grandchild still holds the write end, so
+        // EOF alone is not "finished". Reaping here ends the wait at the real
+        // end of the command rather than at the end of the timeout.
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) {
+            reaped = true;
+        } else if (w < 0 && errno != EINTR) {
+            break;
+        }
     }
-    if (w < 0) {
+
+    if (timed_out) killpg(pid, SIGKILL);  // the group, not just the shell
+    close(pipefd[0]);
+    if (!reaped) {
+        // Retry until the child is reaped: giving up would leave a zombie and
+        // let status 0 misreport a failure as success.
+        pid_t w;
+        while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {
+        }
+        reaped = (w == pid);
+    }
+    if (!reaped) {
         // status was never filled in; reporting it would claim success.
         return {false, std::string("waitpid failed: ") + std::strerror(errno)};
     }
+    if (timed_out) {
+        if (output.empty()) output = "(no output)";
+        output += "\n[timed out after " + std::to_string(budget_ms / 1000) +
+                  "s - command killed]\n";
+        return {false, output};
+    }
     // Hitting the limit closes the pipe under the child (SIGPIPE, reported as
     // 141), so that exit status is our doing, not a failure.
-    bool truncated = output.size() >= limit;
     if (truncated) output += "\n[output truncated]\n";
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
     if (WIFSIGNALED(status)) {

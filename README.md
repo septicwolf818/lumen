@@ -139,6 +139,7 @@ Paths passed to `/cd` and to tool `path` arguments may start with `~`.
   "markdown": false,
   "max_file_bytes": 262144,
   "max_tool_output_bytes": 65536,
+  "command_timeout": 120,
   "max_history_messages": 200,
   "auto_compact": true,
   "compaction_threshold": 80,
@@ -156,6 +157,7 @@ Paths passed to `/cd` and to tool `path` arguments may start with `~`.
 | `markdown` | Render messages as Markdown (see below). |
 | `max_file_bytes` | Read/write size cap for file tools. |
 | `max_tool_output_bytes` | Truncation cap for tool output. |
+| `command_timeout` | Seconds one `execute` command may run before it is killed (0 = no limit). |
 | `max_history_messages` | Upper bound on messages kept per request. |
 | `auto_compact` | Compact automatically near the context limit. |
 | `compaction_threshold` | Percentage of the context window that triggers compaction. |
@@ -224,6 +226,12 @@ Sessions are stored under `~/.local/share/lumen/sessions/`.
 Destructive tools require an explicit `y` unless `auto_approve_tools` is true.
 Paths resolve relative to the working directory; traversal outside it is blocked
 unless `allow_path_escape` is enabled.
+
+`execute` waits on the command and its output together, so it returns as soon as
+the command is done rather than sitting out `command_timeout`. Past that budget
+the whole process group is killed, so backgrounded children die with it. The
+model may pass `timeout_seconds` (capped at 3600) for a single call that needs
+longer, e.g. a build or a test suite.
 
 ## Architecture
 
