@@ -231,7 +231,9 @@ unless `allow_path_escape` is enabled.
 the command is done rather than sitting out `command_timeout`. Past that budget
 the whole process group is killed, so backgrounded children die with it. The
 model may pass `timeout_seconds` (capped at 3600) for a single call that needs
-longer, e.g. a build or a test suite.
+longer, e.g. a build or a test suite. While the command runs the UI keeps
+refreshing and the input line stays editable; `Ctrl+C` kills the process group
+immediately instead of waiting out the timeout.
 
 ## Architecture
 

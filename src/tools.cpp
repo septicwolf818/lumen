@@ -174,7 +174,7 @@ std::string ToolRunner::path_denied(const std::string& user_path) const {
 ToolResult ToolRunner::run(const std::string& name,
                            const nlohmann::json& arguments,
                            std::function<bool(const std::string& prompt)> confirm_fn,
-                           std::function<void()> tick_fn) {
+                           std::function<bool()> pump_fn) {
     // Validate before prompting: confirming a nonexistent tool would waste a
     // prompt on a call that cannot run.
     bool known = name == "read_file" || name == "write_file" || name == "edit_file" ||
@@ -200,8 +200,8 @@ ToolResult ToolRunner::run(const std::string& name,
     else if (name == "write_file") r = write_file(arguments);
     else if (name == "edit_file") r = edit_file(arguments);
     else if (name == "list_directory") r = list_directory(arguments);
-    else if (name == "execute") r = execute(arguments, tick_fn);
-    else r = search(arguments, tick_fn);
+    else if (name == "execute") r = execute(arguments, pump_fn);
+    else r = search(arguments, pump_fn);
 
     // execute/search can emit arbitrary bytes: always sanitize first.
     r.output = util::sanitize_utf8(r.output);
@@ -447,7 +447,8 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     return {true, out.str()};
 }
 
-ToolResult ToolRunner::execute(const nlohmann::json& args, std::function<void()> tick_fn) {
+ToolResult ToolRunner::execute(const nlohmann::json& args,
+                              const std::function<bool()>& pump) {
     if (!args.contains("command")) return {false, "missing required argument \"command\""};
     if (!args["command"].is_string()) return {false, "argument \"command\" must be a string"};
     std::string cmd = args["command"].get<std::string>();
@@ -508,6 +509,7 @@ ToolResult ToolRunner::execute(const nlohmann::json& args, std::function<void()>
     const uint64_t start = util::steady_ms();
     bool timed_out = false;
     bool truncated = false;
+    bool cancelled = false;
     bool reaped = false;
     int status = 0;
 
@@ -515,10 +517,13 @@ ToolResult ToolRunner::execute(const nlohmann::json& args, std::function<void()>
     // happens first, so a command that finishes early ends the wait at once
     // instead of idling out the rest of its timeout.
     for (;;) {
-        // Call tick_fn to keep UI responsive (pump input, check abort flags)
-        // during each poll iteration. This allows Ctrl+C to interrupt long runs.
-        if (tick_fn) tick_fn();
-
+        // Let the caller keep its UI alive while the command runs, and let it
+        // call the wait off. Skipped once the child is reaped: that tail is a
+        // pure drain of the pipe buffer, not a wait on anything.
+        if (pump && !reaped && pump()) {
+            cancelled = true;
+            break;
+        }
         int slice = kPollSliceMs;
         if (budget_ms) {
             uint64_t elapsed = util::steady_ms() - start;
@@ -573,7 +578,7 @@ ToolResult ToolRunner::execute(const nlohmann::json& args, std::function<void()>
         }
     }
 
-    if (timed_out) killpg(pid, SIGKILL);  // the group, not just the shell
+    if (timed_out || cancelled) killpg(pid, SIGKILL);  // the group, not just the shell
     close(pipefd[0]);
     if (!reaped) {
         // Retry until the child is reaped: giving up would leave a zombie and
@@ -586,6 +591,12 @@ ToolResult ToolRunner::execute(const nlohmann::json& args, std::function<void()>
     if (!reaped) {
         // status was never filled in; reporting it would claim success.
         return {false, std::string("waitpid failed: ") + std::strerror(errno)};
+    }
+    if (cancelled) {
+        // Whatever the command printed before it was killed is still its output;
+        // the exit status belongs to our SIGKILL, not to the command.
+        if (output.empty()) output = "(no output)";
+        return {false, output + "\n[cancelled by user - command killed]\n"};
     }
     if (timed_out) {
         if (output.empty()) output = "(no output)";
@@ -607,7 +618,8 @@ ToolResult ToolRunner::execute(const nlohmann::json& args, std::function<void()>
     return {code == 0 || truncated, output};
 }
 
-ToolResult ToolRunner::search(const nlohmann::json& args, std::function<void()> tick_fn) {
+ToolResult ToolRunner::search(const nlohmann::json& args,
+                             const std::function<bool()>& pump) {
     if (!args.contains("pattern")) return {false, "missing required argument \"pattern\""};
     if (!args["pattern"].is_string()) return {false, "argument \"pattern\" must be a string"};
     std::string pattern = args["pattern"].get<std::string>();
@@ -646,7 +658,7 @@ ToolResult ToolRunner::search(const nlohmann::json& args, std::function<void()> 
                       " || [ $? -eq 1 ]; fi";
     nlohmann::json a;  // reuse the execute path (no extra confirmation)
     a["command"] = cmd;
-    auto r = execute(a, tick_fn);
+    auto r = execute(a, pump);
     if (r.ok && r.output == "(no output)")
         r.output = "no matches for " + util::shell_escape(pattern) + " in " + root;
     return r;

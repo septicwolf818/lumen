@@ -1020,9 +1020,14 @@ void Agent::flush_queue() {
     if (!queue_.empty()) ui_.redraw();
 }
 
-// Read keys while generating. Called from curl callbacks, so it must touch
-// only the input line and the queue - never dispatch a prompt or command.
+// Read keys while generating. Called from curl callbacks and from a running
+// tool's wait, so it must touch only the input line and the queue - never
+// dispatch a prompt or command.
 void Agent::pump_input() {
+    // A resize mid-response would otherwise leave the viewport sized for the
+    // old terminal until the next pass returned; the main loop is the only
+    // other place that handles this signal.
+    if (Terminal::got_sigwinch.exchange(false)) ui_.on_resize();
     ui_.tick_spinner();  // animate the separator while the model works
     ui_.tick_marquee();
     while (auto ev = input_.read(0)) {
@@ -1230,15 +1235,18 @@ void Agent::process_tool_calls(const nlohmann::json& assistant_msg) {
         for (const auto& l : tool_arg_lines(tc)) ui_.append(l);
         ui_.redraw();
 
-        // Build a tick_fn that pumps input so the UI stays responsive and
-        // Ctrl+C / abort detection still work during tool execution.
-        auto tick_fn = [this]() {
-            pump_input();  // reads keys, checks SIGINT/SIGTERM flags
-        };
-
-        auto result = tools_->run(name, args, [this](const std::string& prompt) {
-            return ui_.confirm(input_, prompt);
-        }, tick_fn);
+        // A command can run for an hour, and nothing else would redraw or read
+        // a key until it returned. The pump keeps the spinner and the input
+        // line live across the wait, and returns cancel_all_ so Ctrl-C kills
+        // the command instead of waiting out its timeout.
+        auto result = tools_->run(
+            name, args, [this](const std::string& prompt) {
+                return ui_.confirm(input_, prompt);
+            },
+            [this]() -> bool {
+                pump_input();
+                return cancel_all_ || !running_ || Terminal::got_sigterm.load();
+            });
 
         ui_.append("[result]", 1);
         std::string out = result.output;
