@@ -823,32 +823,36 @@ std::optional<std::string> UI::ask_question(InputReader& in,
     std::string custom;
     size_t custom_cursor = 0;  // byte index into custom
 
-    auto draw = [&]() {
-        if (Terminal::got_sigwinch.exchange(false)) term_.update_size();
+    // Panel geometry. Pure computation, no I/O, so it can run per keypress.
+    struct AskLayout {
+        int top = 0;       // first popup row (1-based); panel covers top..rows
+        int total = 0;
+        std::vector<std::string> qlines;
+        size_t vis = 0;    // visible options
+        size_t start = 0;  // first visible option index
+        int input_row = -1;
+        int hint_row = -1;
+    };
+
+    auto compute_layout = [&]() {
+        AskLayout L;
         int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
-        term_.hide_cursor();
-
-        // Bottom-anchored popup: the normal UI (status + conversation) is
-        // drawn first and the panel covers only the bottom rows, so the
-        // conversation stays visible above it.
-        // Wrap the sanitized question to the popup width.
         std::string qsan = sanitize_text(question);
         if (qsan.empty()) qsan = "(no question)";
-        std::vector<std::string> qlines;
         for (const auto& raw : util::split_lines(qsan)) {
             std::string rest = raw;
             if (rest.empty()) {
-                qlines.push_back("");
+                L.qlines.push_back("");
                 continue;
             }
             while (utf8_len(rest) > static_cast<size_t>(cols)) {
-                qlines.push_back(utf8_prefix(rest, static_cast<size_t>(cols)));
-                rest = rest.substr(qlines.back().size());
+                L.qlines.push_back(utf8_prefix(rest, static_cast<size_t>(cols)));
+                rest = rest.substr(L.qlines.back().size());
             }
-            qlines.push_back(rest);
+            L.qlines.push_back(rest);
         }
-        if (qlines.empty()) qlines.push_back(qsan);
+        if (L.qlines.empty()) L.qlines.push_back(qsan);
 
         // Panel chrome rows: top rule + blank + blank + hint + bottom rule,
         // plus the custom input row while editing. The panel never grows
@@ -858,29 +862,104 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         int chrome = 5 + (editing ? 1 : 0);
         size_t max_q = static_cast<size_t>(std::max(1, max_popup - chrome - 1));
         if (max_q > 4) max_q = 4;  // a popup is not the place for essays
-        if (qlines.size() > max_q) {
-            qlines.resize(max_q);
-            qlines.back() = utf8_prefix(qlines.back(), static_cast<size_t>(std::max(0, cols - 3))) + "...";
+        if (L.qlines.size() > max_q) {
+            L.qlines.resize(max_q);
+            L.qlines.back() =
+                utf8_prefix(L.qlines.back(), static_cast<size_t>(std::max(0, cols - 3))) + "...";
         }
-
-        int vis_count = max_popup - chrome - static_cast<int>(qlines.size());
+        int vis_count = max_popup - chrome - static_cast<int>(L.qlines.size());
         if (vis_count < 1) vis_count = 1;
-        size_t vis = std::min(opts.size(), static_cast<size_t>(vis_count));
-        size_t start = 0;
-        if (opts.size() > vis) {
-            size_t half = vis / 2;
-            start = sel > half ? sel - half : 0;
-            if (start + vis > opts.size()) start = opts.size() - vis;
+        L.vis = std::min(opts.size(), static_cast<size_t>(vis_count));
+        if (opts.size() > L.vis) {
+            size_t half = L.vis / 2;
+            L.start = sel > half ? sel - half : 0;
+            if (L.start + L.vis > opts.size()) L.start = opts.size() - L.vis;
         }
+        L.total = 1 + static_cast<int>(L.qlines.size()) + 1 + static_cast<int>(L.vis) +
+                  1 + (editing ? 1 : 0) + 1 + 1;
+        L.top = rows - L.total + 1;
+        if (L.top < 2) L.top = 2;  // never cover the status row
+        L.input_row = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 +
+                      static_cast<int>(L.vis) + 1;
+        L.hint_row = L.input_row + (editing ? 1 : 0);
+        return L;
+    };
 
-        // Draw the normal UI first; the popup then covers only its bottom.
-        draw_status();
-        draw_viewport();
+    auto paint_option_row = [&](const AskLayout& L, size_t idx) {
+        int cols = std::max(10, term_.cols());
+        int rows = std::max(8, term_.rows());
+        int r = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 +
+                static_cast<int>(idx - L.start);
+        if (r < 1 || r > rows) return;
+        term_.move_cursor(r, 1);
+        term_.clear_line();
+        bool is_sel = (idx == sel);
+        std::string prefix = is_sel ? "> " : "  ";
+        std::string text = flatten(opts[idx]);
+        size_t avail = static_cast<size_t>(std::max(4, cols - 4));
+        if (utf8_len(text) > avail)
+            text = utf8_prefix(text, avail > 3 ? avail - 3 : 0) + "...";
+        write_styled(term_, is_sel ? (STYLE_REVERSE | STYLE_BOLD) : STYLE_NORMAL,
+                     prefix + text);
+    };
 
-        int total = 1 + static_cast<int>(qlines.size()) + 1 + static_cast<int>(vis) +
-                    1 + (editing ? 1 : 0) + 1 + 1;
-        int r = rows - total + 1;
-        if (r < 2) r = 2;  // never cover the status row
+    // Repaints only the custom input row and parks the cursor there.
+    auto paint_input_row = [&](const AskLayout& L) {
+        int cols = std::max(10, term_.cols());
+        int rows = std::max(8, term_.rows());
+        if (L.input_row < 1 || L.input_row > rows) return;
+        const std::string input_prompt = "Type your answer: ";
+        term_.move_cursor(L.input_row, 1);
+        term_.clear_line();
+        write_styled(term_, STYLE_BOLD | STYLE_GREEN, input_prompt);
+        int avail = cols - static_cast<int>(input_prompt.size());
+        if (avail < 4) avail = 4;
+        auto chars = split_chars(custom);
+        size_t cursor_char = char_count_before(custom, custom_cursor);
+        size_t win_start = 0;
+        if (chars.size() > static_cast<size_t>(avail)) {
+            win_start = cursor_char >= static_cast<size_t>(avail)
+                ? cursor_char - static_cast<size_t>(avail) + 1
+                : 0;
+            if (win_start + static_cast<size_t>(avail) > chars.size())
+                win_start = chars.size() - static_cast<size_t>(avail);
+        }
+        std::string shown;
+        for (size_t k = win_start;
+             k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
+            shown += chars[k];
+        term_.write(shown);
+        size_t col = cursor_char >= win_start ? cursor_char - win_start : 0;
+        term_.move_cursor(L.input_row,
+                          static_cast<int>(input_prompt.size() + col) + 1);
+        term_.show_cursor();
+    };
+
+    auto paint_hint_row = [&](const AskLayout& L) {
+        int cols = std::max(10, term_.cols());
+        int rows = std::max(8, term_.rows());
+        if (L.hint_row < 1 || L.hint_row > rows) return;
+        term_.move_cursor(L.hint_row, 1);
+        term_.clear_line();
+        std::string hint;
+        if (editing) {
+            hint = "Enter to confirm, Esc to go back";
+        } else {
+            hint = "Up/Down to select, Enter to confirm";
+            if (opts.size() > L.vis)
+                hint += " (" + std::to_string(sel + 1) + "/" + std::to_string(opts.size()) + ")";
+        }
+        write_styled(term_, STYLE_DIM, utf8_prefix(hint, static_cast<size_t>(cols)));
+    };
+
+    // Full panel paint. Only used when the geometry changes (open, edit
+    // toggle, resize, option-window scroll); steady-state updates repaint
+    // single rows so the screen never flashes.
+    auto paint_popup = [&](const AskLayout& L) {
+        int cols = std::max(10, term_.cols());
+        int rows = std::max(8, term_.rows());
+        term_.hide_cursor();
+        int r = L.top;
         term_.move_cursor(r, 1);
         term_.clear_line();
         std::string top = "[ ask ]-";
@@ -888,82 +967,31 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             top += std::string(static_cast<size_t>(cols) - top.size(), '-');
         write_styled(term_, STYLE_DIM, utf8_prefix(top, static_cast<size_t>(cols)));
         ++r;
-        for (const auto& ql : qlines) {
+        for (const auto& ql : L.qlines) {
+            if (r > rows) break;
             term_.move_cursor(r, 1);
             term_.clear_line();
             write_styled(term_, STYLE_BOLD | STYLE_YELLOW, ql);
             ++r;
         }
-        ++r;  // blank line
-        for (size_t k = 0; k < vis; ++k) {
-            size_t idx = start + k;
-            if (r > rows) break;
+        if (r <= rows) {  // blank line
             term_.move_cursor(r, 1);
             term_.clear_line();
-            bool is_sel = (idx == sel);
-            std::string prefix = is_sel ? "> " : "  ";
-            std::string text = flatten(opts[idx]);
-            size_t avail = static_cast<size_t>(std::max(4, cols - 4));
-            if (utf8_len(text) > avail)
-                text = utf8_prefix(text, avail > 3 ? avail - 3 : 0) + "...";
-            int style = is_sel ? (STYLE_REVERSE | STYLE_BOLD) : STYLE_NORMAL;
-            write_styled(term_, style, prefix + text);
             ++r;
         }
-        ++r;  // blank line
-        int input_row = -1;
-        std::string input_prompt = "Type your answer: ";
-        size_t input_cursor_col = 0;
+        for (size_t k = 0; k < L.vis; ++k) paint_option_row(L, L.start + k);
+        r = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 + static_cast<int>(L.vis) + 1;
         if (editing) {
-            if (r <= rows) {
-                term_.move_cursor(r, 1);
-                term_.clear_line();
-                write_styled(term_, STYLE_BOLD | STYLE_GREEN, input_prompt);
-                int avail = cols - static_cast<int>(input_prompt.size());
-                if (avail < 4) avail = 4;
-                auto chars = split_chars(custom);
-                size_t cursor_char = char_count_before(custom, custom_cursor);
-                size_t win_start = 0;
-                if (chars.size() > static_cast<size_t>(avail)) {
-                    win_start = cursor_char >= static_cast<size_t>(avail)
-                        ? cursor_char - static_cast<size_t>(avail) + 1
-                        : 0;
-                    if (win_start + static_cast<size_t>(avail) > chars.size())
-                        win_start = chars.size() - static_cast<size_t>(avail);
-                }
-                std::string input_shown;
-                for (size_t k = win_start;
-                     k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
-                    input_shown += chars[k];
-                term_.write(input_shown);
-                input_cursor_col = cursor_char >= win_start ? cursor_char - win_start : 0;
-                input_row = r;
-                ++r;
-            }
-        }
-        if (r <= rows) {
-            term_.move_cursor(r, 1);
-            term_.clear_line();
-            std::string hint;
-            if (editing) {
-                hint = "Enter to confirm, Esc to go back";
-            } else {
-                hint = "Up/Down to select, Enter to confirm";
-                if (opts.size() > vis)
-                    hint += " (" + std::to_string(sel + 1) + "/" + std::to_string(opts.size()) + ")";
-            }
-            write_styled(term_, STYLE_DIM, utf8_prefix(hint, static_cast<size_t>(cols)));
+            paint_input_row(L);
             ++r;
         }
+        paint_hint_row(L);
+        ++r;
         if (r > rows) r = rows;
         term_.move_cursor(r, 1);
         term_.clear_line();
         write_styled(term_, STYLE_DIM, std::string(static_cast<size_t>(cols), '-'));
-        if (editing && input_row > 0) {
-            term_.move_cursor(input_row,
-                              static_cast<int>(input_prompt.size() + input_cursor_col) + 1);
-            term_.show_cursor();
-        }
+        if (!editing) term_.hide_cursor();
     };
 
     auto restore = [&]() {
@@ -1009,11 +1037,23 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         custom_cursor = std::min(custom.size(), custom_cursor + len);
     };
 
+    // The base screen already shows the conversation (the caller redraws
+    // before running tools), so paint the panel once and then touch only
+    // the rows that change. Full repaints happen solely on geometry changes
+    // (edit toggle, resize), which keeps the panel flicker-free and stops
+    // consecutive popups of different heights from flashing over each other.
+    AskLayout L = compute_layout();
+    paint_popup(L);
     for (;;) {
-        draw();
         if (Terminal::got_sigterm.load()) {
             restore();
             return std::nullopt;
+        }
+        if (Terminal::got_sigwinch.exchange(false)) {
+            term_.update_size();
+            redraw();
+            L = compute_layout();
+            paint_popup(L);
         }
         auto ev = in.read(100);
         if (!ev) continue;
@@ -1033,7 +1073,12 @@ std::optional<std::string> UI::ask_question(InputReader& in,
                     return ans;
                 }
                 case Key::Escape:
+                    // The panel shrinks, exposing a row above it: repaint the
+                    // base first so no stale panel row is left behind.
                     editing = false;
+                    redraw();
+                    L = compute_layout();
+                    paint_popup(L);
                     break;
                 case Key::CtrlC:
                 case Key::CtrlQ:
@@ -1041,13 +1086,15 @@ std::optional<std::string> UI::ask_question(InputReader& in,
                     return std::nullopt;
                 case Key::Char:
                     if (ev->codepoint >= 32) custom_insert(ev->codepoint);
+                    L = compute_layout();
+                    paint_input_row(L);
                     break;
-                case Key::Backspace: custom_backspace(); break;
-                case Key::Delete: custom_delete(); break;
-                case Key::Left: custom_left(); break;
-                case Key::Right: custom_right(); break;
-                case Key::Home: custom_cursor = 0; break;
-                case Key::End: custom_cursor = custom.size(); break;
+                case Key::Backspace: custom_backspace(); paint_input_row(L); break;
+                case Key::Delete: custom_delete(); paint_input_row(L); break;
+                case Key::Left: custom_left(); paint_input_row(L); break;
+                case Key::Right: custom_right(); paint_input_row(L); break;
+                case Key::Home: custom_cursor = 0; paint_input_row(L); break;
+                case Key::End: custom_cursor = custom.size(); paint_input_row(L); break;
                 case Key::Up:
                 case Key::Down:
                     break;  // selection is keyboard-driven outside the editor
@@ -1058,16 +1105,32 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         }
         switch (ev->key) {
             case Key::Up:
-                sel = (sel + opts.size() - 1) % opts.size();
+            case Key::Down: {
+                size_t old = sel;
+                if (ev->key == Key::Up) sel = (sel + opts.size() - 1) % opts.size();
+                else sel = (sel + 1) % opts.size();
+                AskLayout nL = compute_layout();
+                if (nL.start == L.start && opts.size() <= L.vis) {
+                    // Same window, no (i/N) counter visible: only the two
+                    // changed rows need paint.
+                    paint_option_row(L, old);
+                    paint_option_row(L, sel);
+                } else {
+                    // Window scrolled (or counter visible): same rows, new
+                    // content + counter.
+                    paint_popup(nL);
+                }
+                L = nL;
                 break;
-            case Key::Down:
-                sel = (sel + 1) % opts.size();
-                break;
+            }
             case Key::Enter:
                 if (sel == custom_idx) {
+                    // The panel grows downward only; rows above stay valid.
                     editing = true;
                     custom.clear();
                     custom_cursor = 0;
+                    L = compute_layout();
+                    paint_popup(L);
                 } else {
                     std::string ans = opts[sel];
                     restore();
