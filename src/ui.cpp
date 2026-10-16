@@ -812,7 +812,7 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         return out;
     };
 
-    // Preserve any half-typed main input across the modal.
+    // Preserve any half-typed main input across the popup.
     std::string saved_input = input_;
     size_t saved_cursor = cursor_;
     input_.clear();
@@ -828,10 +828,11 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
         term_.hide_cursor();
-        term_.clear_screen();
 
-        // Wrap the sanitized question to the screen width (capped so the
-        // options always have room).
+        // Bottom-anchored popup: the normal UI (status + conversation) is
+        // drawn first and the panel covers only the bottom rows, so the
+        // conversation stays visible above it.
+        // Wrap the sanitized question to the popup width.
         std::string qsan = sanitize_text(question);
         if (qsan.empty()) qsan = "(no question)";
         std::vector<std::string> qlines;
@@ -848,14 +849,21 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             qlines.push_back(rest);
         }
         if (qlines.empty()) qlines.push_back(qsan);
-        const size_t kMaxQ = 8;
-        if (qlines.size() > kMaxQ) {
-            qlines.resize(kMaxQ);
+
+        // Panel chrome rows: top rule + blank + blank + hint + bottom rule,
+        // plus the custom input row while editing. The panel never grows
+        // past max_popup rows so the conversation stays visible above it.
+        int max_popup = rows - 2;  // keep status + at least one convo row
+        if (max_popup < 6) max_popup = 6;
+        int chrome = 5 + (editing ? 1 : 0);
+        size_t max_q = static_cast<size_t>(std::max(1, max_popup - chrome - 1));
+        if (max_q > 4) max_q = 4;  // a popup is not the place for essays
+        if (qlines.size() > max_q) {
+            qlines.resize(max_q);
             qlines.back() = utf8_prefix(qlines.back(), static_cast<size_t>(std::max(0, cols - 3))) + "...";
         }
 
-        int reserved = static_cast<int>(qlines.size()) + 3 + (editing ? 1 : 0);
-        int vis_count = rows - reserved;
+        int vis_count = max_popup - chrome - static_cast<int>(qlines.size());
         if (vis_count < 1) vis_count = 1;
         size_t vis = std::min(opts.size(), static_cast<size_t>(vis_count));
         size_t start = 0;
@@ -865,7 +873,21 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             if (start + vis > opts.size()) start = opts.size() - vis;
         }
 
-        int r = 1;
+        // Draw the normal UI first; the popup then covers only its bottom.
+        draw_status();
+        draw_viewport();
+
+        int total = 1 + static_cast<int>(qlines.size()) + 1 + static_cast<int>(vis) +
+                    1 + (editing ? 1 : 0) + 1 + 1;
+        int r = rows - total + 1;
+        if (r < 2) r = 2;  // never cover the status row
+        term_.move_cursor(r, 1);
+        term_.clear_line();
+        std::string top = "[ ask ]-";
+        if (top.size() < static_cast<size_t>(cols))
+            top += std::string(static_cast<size_t>(cols) - top.size(), '-');
+        write_styled(term_, STYLE_DIM, utf8_prefix(top, static_cast<size_t>(cols)));
+        ++r;
         for (const auto& ql : qlines) {
             term_.move_cursor(r, 1);
             term_.clear_line();
@@ -875,7 +897,7 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         ++r;  // blank line
         for (size_t k = 0; k < vis; ++k) {
             size_t idx = start + k;
-            if (r > rows - 2 - (editing ? 1 : 0)) break;
+            if (r > rows) break;
             term_.move_cursor(r, 1);
             term_.clear_line();
             bool is_sel = (idx == sel);
@@ -891,10 +913,9 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         ++r;  // blank line
         int input_row = -1;
         std::string input_prompt = "Type your answer: ";
-        std::string input_shown;
         size_t input_cursor_col = 0;
         if (editing) {
-            if (r <= rows - 1) {
+            if (r <= rows) {
                 term_.move_cursor(r, 1);
                 term_.clear_line();
                 write_styled(term_, STYLE_BOLD | STYLE_GREEN, input_prompt);
@@ -910,6 +931,7 @@ std::optional<std::string> UI::ask_question(InputReader& in,
                     if (win_start + static_cast<size_t>(avail) > chars.size())
                         win_start = chars.size() - static_cast<size_t>(avail);
                 }
+                std::string input_shown;
                 for (size_t k = win_start;
                      k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
                     input_shown += chars[k];
@@ -931,7 +953,12 @@ std::optional<std::string> UI::ask_question(InputReader& in,
                     hint += " (" + std::to_string(sel + 1) + "/" + std::to_string(opts.size()) + ")";
             }
             write_styled(term_, STYLE_DIM, utf8_prefix(hint, static_cast<size_t>(cols)));
+            ++r;
         }
+        if (r > rows) r = rows;
+        term_.move_cursor(r, 1);
+        term_.clear_line();
+        write_styled(term_, STYLE_DIM, std::string(static_cast<size_t>(cols), '-'));
         if (editing && input_row > 0) {
             term_.move_cursor(input_row,
                               static_cast<int>(input_prompt.size() + input_cursor_col) + 1);
