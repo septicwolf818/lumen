@@ -824,12 +824,11 @@ std::optional<std::string> UI::ask_question(InputReader& in,
     size_t custom_cursor = 0;  // byte index into custom
 
     // Panel geometry. Pure computation, no I/O, so it can run per keypress.
-    // The question itself is not part of the panel: it is already on screen
-    // in the [tool] ask scrollback block directly above, so repeating it
-    // here would only duplicate information.
+    // The question is the panel header, painted above the options.
     struct AskLayout {
         int top = 0;       // first popup row (1-based); panel covers top..rows
         int total = 0;
+        std::vector<std::string> qlines;  // wrapped question header
         size_t vis = 0;    // visible options
         size_t start = 0;  // first visible option index
         int input_row = -1;
@@ -838,15 +837,42 @@ std::optional<std::string> UI::ask_question(InputReader& in,
 
     auto compute_layout = [&]() {
         AskLayout L;
+        int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
 
-        // Panel rows: top rule + options + blank + optional custom input +
-        // hint + bottom rule. The panel never grows past max_popup rows so
-        // the conversation (with the question) stays visible above it.
+        // Wrap the question to the popup width; it heads the panel.
+        std::string qsan = sanitize_text(question);
+        if (qsan.empty()) qsan = "(no question)";
+        for (const auto& raw : util::split_lines(qsan)) {
+            std::string rest = raw;
+            if (rest.empty()) {
+                L.qlines.push_back("");
+                continue;
+            }
+            while (utf8_len(rest) > static_cast<size_t>(cols)) {
+                L.qlines.push_back(utf8_prefix(rest, static_cast<size_t>(cols)));
+                rest = rest.substr(L.qlines.back().size());
+            }
+            L.qlines.push_back(rest);
+        }
+        if (L.qlines.empty()) L.qlines.push_back(qsan);
+
+        // Panel rows: top rule + question + blank + options + blank + hint +
+        // bottom rule. While editing, the custom option row doubles as the
+        // input field: the typed answer replaces its label in place, so the
+        // panel never shows both. The panel never grows past max_popup rows
+        // so the conversation stays visible above it.
         int max_popup = rows - 2;  // keep status + at least one convo row
         if (max_popup < 6) max_popup = 6;
-        int chrome = 4 + (editing ? 1 : 0);
-        int vis_count = max_popup - chrome;
+        int chrome = 5;  // top rule + blank + blank + hint + bottom rule
+        size_t max_q = static_cast<size_t>(std::max(1, max_popup - chrome - 1));
+        if (max_q > 4) max_q = 4;  // a popup is not the place for essays
+        if (L.qlines.size() > max_q) {
+            L.qlines.resize(max_q);
+            L.qlines.back() =
+                utf8_prefix(L.qlines.back(), static_cast<size_t>(std::max(0, cols - 3))) + "...";
+        }
+        int vis_count = max_popup - chrome - static_cast<int>(L.qlines.size());
         if (vis_count < 1) vis_count = 1;
         L.vis = std::min(opts.size(), static_cast<size_t>(vis_count));
         if (opts.size() > L.vis) {
@@ -854,18 +880,23 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             L.start = sel > half ? sel - half : 0;
             if (L.start + L.vis > opts.size()) L.start = opts.size() - L.vis;
         }
-        L.total = 1 + static_cast<int>(L.vis) + 1 + (editing ? 1 : 0) + 1 + 1;
+        int q = static_cast<int>(L.qlines.size());
+        L.total = 1 + q + 1 + static_cast<int>(L.vis) + 1 + 1 + 1;
         L.top = rows - L.total + 1;
         if (L.top < 2) L.top = 2;  // never cover the status row
-        L.input_row = L.top + 1 + static_cast<int>(L.vis) + 1;
-        L.hint_row = L.input_row + (editing ? 1 : 0);
+        if (editing && custom_idx >= L.start && custom_idx < L.start + L.vis)
+            L.input_row = L.top + 1 + q + 1 + static_cast<int>(custom_idx - L.start);
+        else
+            L.input_row = -1;
+        L.hint_row = L.top + 1 + q + 1 + static_cast<int>(L.vis) + 1;
         return L;
     };
 
     auto paint_option_row = [&](const AskLayout& L, size_t idx) {
         int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
-        int r = L.top + 1 + static_cast<int>(idx - L.start);
+        int r = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 +
+                static_cast<int>(idx - L.start);
         if (r < 1 || r > rows) return;
         term_.move_cursor(r, 1);
         term_.clear_line();
@@ -879,16 +910,18 @@ std::optional<std::string> UI::ask_question(InputReader& in,
                      prefix + text);
     };
 
-    // Repaints only the custom input row and parks the cursor there.
+    // Paints the custom option row as the input field: "> " plus the typed
+    // answer (or a dim placeholder while empty), with the cursor parked
+    // where typing continues. Parks the cursor there.
     auto paint_input_row = [&](const AskLayout& L) {
         int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
         if (L.input_row < 1 || L.input_row > rows) return;
-        const std::string input_prompt = "Type your answer: ";
+        const std::string prefix = "> ";
         term_.move_cursor(L.input_row, 1);
         term_.clear_line();
-        write_styled(term_, STYLE_BOLD | STYLE_GREEN, input_prompt);
-        int avail = cols - static_cast<int>(input_prompt.size());
+        term_.write(prefix);
+        int avail = cols - static_cast<int>(prefix.size());
         if (avail < 4) avail = 4;
         auto chars = split_chars(custom);
         size_t cursor_char = char_count_before(custom, custom_cursor);
@@ -900,14 +933,20 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             if (win_start + static_cast<size_t>(avail) > chars.size())
                 win_start = chars.size() - static_cast<size_t>(avail);
         }
-        std::string shown;
-        for (size_t k = win_start;
-             k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
-            shown += chars[k];
-        term_.write(shown);
-        size_t col = cursor_char >= win_start ? cursor_char - win_start : 0;
+        size_t col = 0;
+        if (chars.empty()) {
+            write_styled(term_, STYLE_DIM,
+                         utf8_prefix("Type your answer...", static_cast<size_t>(avail)));
+        } else {
+            std::string shown;
+            for (size_t k = win_start;
+                 k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
+                shown += chars[k];
+            term_.write(shown);
+            col = cursor_char >= win_start ? cursor_char - win_start : 0;
+        }
         term_.move_cursor(L.input_row,
-                          static_cast<int>(input_prompt.size() + col) + 1);
+                          static_cast<int>(prefix.size() + col) + 1);
         term_.show_cursor();
     };
 
@@ -943,10 +982,29 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             top += std::string(static_cast<size_t>(cols) - top.size(), '-');
         write_styled(term_, STYLE_DIM, utf8_prefix(top, static_cast<size_t>(cols)));
         ++r;
-        for (size_t k = 0; k < L.vis; ++k) paint_option_row(L, L.start + k);
-        r = L.top + 1 + static_cast<int>(L.vis) + 1;
-        if (editing) {
-            paint_input_row(L);
+        for (const auto& ql : L.qlines) {
+            if (r > rows) break;
+            term_.move_cursor(r, 1);
+            term_.clear_line();
+            write_styled(term_, STYLE_BOLD | STYLE_YELLOW, ql);
+            ++r;
+        }
+        if (r <= rows) {  // blank separator, explicitly cleared
+            term_.move_cursor(r, 1);
+            term_.clear_line();
+            ++r;
+        }
+        for (size_t k = 0; k < L.vis && r <= rows; ++k) {
+            size_t idx = L.start + k;
+            // While editing, the custom row is the input field (painted
+            // below), never the stale option label.
+            if (editing && idx == custom_idx) paint_input_row(L);
+            else paint_option_row(L, idx);
+            ++r;
+        }
+        if (r <= rows) {  // blank separator, explicitly cleared
+            term_.move_cursor(r, 1);
+            term_.clear_line();
             ++r;
         }
         paint_hint_row(L);
@@ -955,7 +1013,10 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         term_.move_cursor(r, 1);
         term_.clear_line();
         write_styled(term_, STYLE_DIM, std::string(static_cast<size_t>(cols), '-'));
-        if (!editing) term_.hide_cursor();
+        // paint_input_row parks the cursor mid-panel; put it back there now
+        // that the rows below it are drawn.
+        if (editing) paint_input_row(L);
+        else term_.hide_cursor();
     };
 
     auto restore = [&]() {
@@ -1001,10 +1062,9 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         custom_cursor = std::min(custom.size(), custom_cursor + len);
     };
 
-    // The panel shows no question text (it is already in the [tool] ask
-    // scrollback block), so snap to the bottom first: that block is then
-    // guaranteed to sit directly above the panel. One full redraw here;
-    // after that only the rows that change are touched. Full repaints happen
+    // Snap to the bottom first so the panel opens over the latest
+    // conversation. One full redraw here; after that only the rows that
+    // change are touched. Full repaints happen
     // solely on geometry changes (edit toggle, resize), which keeps the
     // panel flicker-free and stops consecutive popups of different heights
     // from flashing over each other.
@@ -1093,7 +1153,8 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             }
             case Key::Enter:
                 if (sel == custom_idx) {
-                    // The panel grows downward only; rows above stay valid.
+                    // Whole-panel repaint: the custom row becomes the input
+                    // field and the hint text changes with it.
                     editing = true;
                     custom.clear();
                     custom_cursor = 0;
