@@ -73,12 +73,19 @@ Agent::Agent(Terminal& term, UI& ui, InputReader& input)
     char cwd[4096];
     std::string cwd_str = getcwd(cwd, sizeof(cwd)) ? cwd : ".";
     tools_ = std::make_unique<ToolRunner>(cfg_, cwd_str);
+    tools_->set_ask_fn([this](const std::string& question,
+                              const std::vector<std::string>& options)
+                           -> std::optional<std::string> {
+        return ui_.ask_question(input_, question, options);
+    });
 }
 
 std::string Agent::system_prompt() const {
     return
         "You are a coding assistant running in a minimal Linux terminal agent.\n"
         "You can use tools to read/write files, list directories, search, and execute shell commands.\n"
+        "Use the ask tool when you need clarification, a decision, or input before continuing: "
+        "provide a concise question and 2-4 short options.\n"
         "Working directory: " + tools_->cwd() + "\n"
         "Prefer small, focused tool calls. After tools return, explain results clearly.\n"
         "When editing code, use edit_file with exact old_text matches when possible.\n"
@@ -657,7 +664,7 @@ void Agent::handle_command(const std::string& line) {
     } else if (cmd == "/compact") {
         do_compact();
     } else if (cmd == "/tools") {
-        ui_.append("Tools: read_file, write_file, edit_file, list_directory, execute, search", STYLE_BOLD);
+        ui_.append("Tools: read_file, write_file, edit_file, list_directory, execute, search, ask", STYLE_BOLD);
         ui_.append("auto_approve_tools=" + std::string(cfg_.auto_approve_tools ? "true" : "false"));
     } else if (cmd == "/config") {
         ui_.append(cfg_.to_json().dump(2));

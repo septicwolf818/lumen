@@ -22,6 +22,13 @@ public:
     void set_cwd(const std::string& cwd) { cwd_ = cwd; }
     const std::string& cwd() const { return cwd_; }
 
+    // Interactive handler for the ask tool: shows question + options and
+    // returns the user's answer, or nullopt when cancelled. Set by the
+    // Agent (which owns the UI); without it ask calls fail cleanly.
+    using AskFn = std::function<std::optional<std::string>(
+        const std::string& question, const std::vector<std::string>& options)>;
+    void set_ask_fn(AskFn fn) { ask_fn_ = std::move(fn); }
+
     // True if the tool is read-only (no confirmation needed).
     static bool is_readonly(const std::string& name);
 
@@ -36,6 +43,9 @@ public:
 private:
     Config& cfg_;
     std::string cwd_;
+    AskFn ask_fn_;
+
+    ToolResult ask(const nlohmann::json& args);
 
     ToolResult read_file(const nlohmann::json& args);
     ToolResult write_file(const nlohmann::json& args);

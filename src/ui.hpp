@@ -3,6 +3,7 @@
 #include "terminal.hpp"
 #include "input.hpp"
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -100,6 +101,16 @@ public:
 
     // Prompt for y/N confirmation (blocks on input)
     bool confirm(InputReader& in, const std::string& prompt);
+
+    // Interactive question for the ask tool (blocks on input). Shows the
+    // question with the given options plus a trailing "Type your own
+    // answer..." row. Up/Down moves, Enter confirms; Enter on the last row
+    // opens a text input where Enter confirms and Esc goes back to the list.
+    // Returns the selected option text or the typed answer, or nullopt when
+    // cancelled (Esc/Ctrl-C/Ctrl-Q/SIGTERM).
+    std::optional<std::string> ask_question(InputReader& in,
+                                            const std::string& question,
+                                            const std::vector<std::string>& options);
 
     // Append a styled line to the scrollback (e.g. a transient notice)
     void message(const std::string& msg, int style = STYLE_DIM);

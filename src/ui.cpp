@@ -747,6 +747,317 @@ bool UI::confirm(InputReader& in, const std::string& prompt) {
     }
 }
 
+std::optional<std::string> UI::ask_question(InputReader& in,
+                                            const std::string& question,
+                                            const std::vector<std::string>& options) {
+    const std::string kCustomLabel = "Type your own answer...";
+    std::vector<std::string> opts = options;
+    if (opts.empty() || opts.back() != kCustomLabel) opts.push_back(kCustomLabel);
+    const size_t custom_idx = opts.size() - 1;
+
+    // Flatten to a single display line: newlines/tabs become spaces, other
+    // controls are dropped, UTF-8 sequences preserved.
+    auto flatten = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size());
+        for (size_t i = 0; i < s.size();) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c == '\n' || c == '\r' || c == '\t') {
+                out.push_back(' ');
+                ++i;
+                continue;
+            }
+            if (c < 0x20 || c == 0x7F) {
+                ++i;
+                continue;
+            }
+            size_t len = utf8_seq_len(c);
+            if (i + len > s.size()) len = 1;
+            out.append(s, i, len);
+            i += len;
+        }
+        return out;
+    };
+
+    // Byte index -> character index (for cursor placement in UTF-8 text).
+    auto char_count_before = [](const std::string& s, size_t bytes) {
+        size_t n = 0;
+        size_t i = 0;
+        while (i < s.size() && i < bytes) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            size_t len = 1;
+            if ((c & 0xE0) == 0xC0) len = 2;
+            else if ((c & 0xF0) == 0xE0) len = 3;
+            else if ((c & 0xF8) == 0xF0) len = 4;
+            if (i + len > s.size()) len = 1;
+            i += len;
+            ++n;
+        }
+        return n;
+    };
+
+    // Split into UTF-8 characters (each entry is one character's bytes).
+    auto split_chars = [](const std::string& s) {
+        std::vector<std::string> out;
+        for (size_t i = 0; i < s.size();) {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            size_t len = 1;
+            if ((c & 0xE0) == 0xC0) len = 2;
+            else if ((c & 0xF0) == 0xE0) len = 3;
+            else if ((c & 0xF8) == 0xF0) len = 4;
+            if (i + len > s.size()) len = 1;
+            out.push_back(s.substr(i, len));
+            i += len;
+        }
+        return out;
+    };
+
+    // Preserve any half-typed main input across the modal.
+    std::string saved_input = input_;
+    size_t saved_cursor = cursor_;
+    input_.clear();
+    cursor_ = 0;
+
+    size_t sel = 0;
+    bool editing = false;
+    std::string custom;
+    size_t custom_cursor = 0;  // byte index into custom
+
+    auto draw = [&]() {
+        if (Terminal::got_sigwinch.exchange(false)) term_.update_size();
+        int cols = std::max(10, term_.cols());
+        int rows = std::max(8, term_.rows());
+        term_.hide_cursor();
+        term_.clear_screen();
+
+        // Wrap the sanitized question to the screen width (capped so the
+        // options always have room).
+        std::string qsan = sanitize_text(question);
+        if (qsan.empty()) qsan = "(no question)";
+        std::vector<std::string> qlines;
+        for (const auto& raw : util::split_lines(qsan)) {
+            std::string rest = raw;
+            if (rest.empty()) {
+                qlines.push_back("");
+                continue;
+            }
+            while (utf8_len(rest) > static_cast<size_t>(cols)) {
+                qlines.push_back(utf8_prefix(rest, static_cast<size_t>(cols)));
+                rest = rest.substr(qlines.back().size());
+            }
+            qlines.push_back(rest);
+        }
+        if (qlines.empty()) qlines.push_back(qsan);
+        const size_t kMaxQ = 8;
+        if (qlines.size() > kMaxQ) {
+            qlines.resize(kMaxQ);
+            qlines.back() = utf8_prefix(qlines.back(), static_cast<size_t>(std::max(0, cols - 3))) + "...";
+        }
+
+        int reserved = static_cast<int>(qlines.size()) + 3 + (editing ? 1 : 0);
+        int vis_count = rows - reserved;
+        if (vis_count < 1) vis_count = 1;
+        size_t vis = std::min(opts.size(), static_cast<size_t>(vis_count));
+        size_t start = 0;
+        if (opts.size() > vis) {
+            size_t half = vis / 2;
+            start = sel > half ? sel - half : 0;
+            if (start + vis > opts.size()) start = opts.size() - vis;
+        }
+
+        int r = 1;
+        for (const auto& ql : qlines) {
+            term_.move_cursor(r, 1);
+            term_.clear_line();
+            write_styled(term_, STYLE_BOLD | STYLE_YELLOW, ql);
+            ++r;
+        }
+        ++r;  // blank line
+        for (size_t k = 0; k < vis; ++k) {
+            size_t idx = start + k;
+            if (r > rows - 2 - (editing ? 1 : 0)) break;
+            term_.move_cursor(r, 1);
+            term_.clear_line();
+            bool is_sel = (idx == sel);
+            std::string prefix = is_sel ? "> " : "  ";
+            std::string text = flatten(opts[idx]);
+            size_t avail = static_cast<size_t>(std::max(4, cols - 4));
+            if (utf8_len(text) > avail)
+                text = utf8_prefix(text, avail > 3 ? avail - 3 : 0) + "...";
+            int style = is_sel ? (STYLE_REVERSE | STYLE_BOLD) : STYLE_NORMAL;
+            write_styled(term_, style, prefix + text);
+            ++r;
+        }
+        ++r;  // blank line
+        int input_row = -1;
+        std::string input_prompt = "Type your answer: ";
+        std::string input_shown;
+        size_t input_cursor_col = 0;
+        if (editing) {
+            if (r <= rows - 1) {
+                term_.move_cursor(r, 1);
+                term_.clear_line();
+                write_styled(term_, STYLE_BOLD | STYLE_GREEN, input_prompt);
+                int avail = cols - static_cast<int>(input_prompt.size());
+                if (avail < 4) avail = 4;
+                auto chars = split_chars(custom);
+                size_t cursor_char = char_count_before(custom, custom_cursor);
+                size_t win_start = 0;
+                if (chars.size() > static_cast<size_t>(avail)) {
+                    win_start = cursor_char >= static_cast<size_t>(avail)
+                        ? cursor_char - static_cast<size_t>(avail) + 1
+                        : 0;
+                    if (win_start + static_cast<size_t>(avail) > chars.size())
+                        win_start = chars.size() - static_cast<size_t>(avail);
+                }
+                for (size_t k = win_start;
+                     k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
+                    input_shown += chars[k];
+                term_.write(input_shown);
+                input_cursor_col = cursor_char >= win_start ? cursor_char - win_start : 0;
+                input_row = r;
+                ++r;
+            }
+        }
+        if (r <= rows) {
+            term_.move_cursor(r, 1);
+            term_.clear_line();
+            std::string hint;
+            if (editing) {
+                hint = "Enter to confirm, Esc to go back";
+            } else {
+                hint = "Up/Down to select, Enter to confirm";
+                if (opts.size() > vis)
+                    hint += " (" + std::to_string(sel + 1) + "/" + std::to_string(opts.size()) + ")";
+            }
+            write_styled(term_, STYLE_DIM, utf8_prefix(hint, static_cast<size_t>(cols)));
+        }
+        if (editing && input_row > 0) {
+            term_.move_cursor(input_row,
+                              static_cast<int>(input_prompt.size() + input_cursor_col) + 1);
+            term_.show_cursor();
+        }
+    };
+
+    auto restore = [&]() {
+        input_ = saved_input;
+        cursor_ = std::min(saved_cursor, input_.size());
+        redraw();
+    };
+
+    auto custom_insert = [&](uint32_t cp) {
+        std::string u = utf8_from_cp(cp);
+        custom.insert(custom_cursor, u);
+        custom_cursor += u.size();
+    };
+    auto custom_backspace = [&]() {
+        if (custom_cursor == 0) return;
+        size_t i = custom_cursor;
+        do { --i; } while (i > 0 && (static_cast<unsigned char>(custom[i]) & 0xC0) == 0x80);
+        custom.erase(i, custom_cursor - i);
+        custom_cursor = i;
+    };
+    auto custom_delete = [&]() {
+        if (custom_cursor >= custom.size()) return;
+        unsigned char c = static_cast<unsigned char>(custom[custom_cursor]);
+        size_t len = 1;
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        if (custom_cursor + len > custom.size()) len = custom.size() - custom_cursor;
+        custom.erase(custom_cursor, len);
+    };
+    auto custom_left = [&]() {
+        if (custom_cursor == 0) return;
+        do { --custom_cursor; } while (custom_cursor > 0 &&
+            (static_cast<unsigned char>(custom[custom_cursor]) & 0xC0) == 0x80);
+    };
+    auto custom_right = [&]() {
+        if (custom_cursor >= custom.size()) return;
+        unsigned char c = static_cast<unsigned char>(custom[custom_cursor]);
+        size_t len = 1;
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        custom_cursor = std::min(custom.size(), custom_cursor + len);
+    };
+
+    for (;;) {
+        draw();
+        if (Terminal::got_sigterm.load()) {
+            restore();
+            return std::nullopt;
+        }
+        auto ev = in.read(100);
+        if (!ev) continue;
+        if (Terminal::got_sigterm.load()) {
+            restore();
+            return std::nullopt;
+        }
+        if (editing) {
+            switch (ev->key) {
+                case Key::Enter: {
+                    std::string ans = util::trim(custom);
+                    if (ans.empty()) {
+                        term_.write("\a");
+                        break;
+                    }
+                    restore();
+                    return ans;
+                }
+                case Key::Escape:
+                    editing = false;
+                    break;
+                case Key::CtrlC:
+                case Key::CtrlQ:
+                    restore();
+                    return std::nullopt;
+                case Key::Char:
+                    if (ev->codepoint >= 32) custom_insert(ev->codepoint);
+                    break;
+                case Key::Backspace: custom_backspace(); break;
+                case Key::Delete: custom_delete(); break;
+                case Key::Left: custom_left(); break;
+                case Key::Right: custom_right(); break;
+                case Key::Home: custom_cursor = 0; break;
+                case Key::End: custom_cursor = custom.size(); break;
+                case Key::Up:
+                case Key::Down:
+                    break;  // selection is keyboard-driven outside the editor
+                default:
+                    break;
+            }
+            continue;
+        }
+        switch (ev->key) {
+            case Key::Up:
+                sel = (sel + opts.size() - 1) % opts.size();
+                break;
+            case Key::Down:
+                sel = (sel + 1) % opts.size();
+                break;
+            case Key::Enter:
+                if (sel == custom_idx) {
+                    editing = true;
+                    custom.clear();
+                    custom_cursor = 0;
+                } else {
+                    std::string ans = opts[sel];
+                    restore();
+                    return ans;
+                }
+                break;
+            case Key::Escape:
+            case Key::CtrlC:
+            case Key::CtrlQ:
+                restore();
+                return std::nullopt;
+            default:
+                break;  // typing does nothing in the list; Enter the custom row to type
+        }
+    }
+}
+
 void UI::message(const std::string& msg, int style) {
     append(msg, style);
 }

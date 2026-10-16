@@ -18,7 +18,7 @@ dependencies, and a memory footprint that leaves room for the model itself.
   extensions. Content drawn before startup is restored on exit via the
   alternate screen buffer.
 - **Tool calling** — `read_file`, `write_file`, `edit_file`, `list_directory`,
-  `search` and `execute`, with confirmation for anything destructive.
+  `search`, `execute` and `ask`, with confirmation for anything destructive.
 - **Sessions** — persist, list, load, rename and delete conversations. Sessions
   are auto-named from the conversation and listed by last activity.
 - **Streaming responses** with a live spinner and a queue for messages typed
@@ -219,6 +219,7 @@ Sessions are stored under `~/.local/share/lumen/sessions/`.
 | `read_file`      | Read a text file                       | No           |
 | `list_directory` | List directory contents                | No           |
 | `search`         | Recursive text search (ripgrep/grep)   | No           |
+| `ask`            | Ask the user (options + custom answer) | No           |
 | `write_file`     | Create or overwrite a file             | Yes          |
 | `edit_file`      | Replace a portion of a file            | Yes          |
 | `execute`        | Run a shell command                    | Yes          |

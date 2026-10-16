@@ -150,6 +150,21 @@ nlohmann::json tool_definitions() {
                     {"required", nlohmann::json::array({"pattern"})}
                 }}
             }}
+        },
+        {
+            {"type", "function"},
+            {"function", {
+                {"name", "ask"},
+                {"description", "Ask the user a question with selectable options. Use when you need clarification, a decision, or input before continuing. Provide a concise question and 2-4 short options; a \"Type your own answer...\" option is added automatically and lets the user type a custom answer. Returns the user's selected or typed answer as text."},
+                {"parameters", {
+                    {"type", "object"},
+                    {"properties", {
+                        {"question", {{"type", "string"}, {"description", "Question to show the user"}}},
+                        {"options", {{"type", "array"}, {"description", "Answer options to choose from (2-4 short labels)"}, {"items", {{"type", "string"}}}, {"minItems", 1}}}
+                    }},
+                    {"required", nlohmann::json::array({"question", "options"})}
+                }}
+            }}
         }
     });
 }
@@ -157,7 +172,11 @@ nlohmann::json tool_definitions() {
 ToolRunner::ToolRunner(Config& cfg, std::string cwd) : cfg_(cfg), cwd_(std::move(cwd)) {}
 
 bool ToolRunner::is_readonly(const std::string& name) {
-    return name == "read_file" || name == "list_directory" || name == "search";
+    // ask is read-only in the sense that it changes nothing on disk, so it
+    // never needs the y/N destructive-tool prompt; it runs its own
+    // interactive picker instead.
+    return name == "read_file" || name == "list_directory" || name == "search" ||
+           name == "ask";
 }
 
 std::optional<std::string> ToolRunner::safe_path(const std::string& user_path) {
@@ -178,11 +197,24 @@ ToolResult ToolRunner::run(const std::string& name,
     // Validate before prompting: confirming a nonexistent tool would waste a
     // prompt on a call that cannot run.
     bool known = name == "read_file" || name == "write_file" || name == "edit_file" ||
-                 name == "list_directory" || name == "execute" || name == "search";
+                 name == "list_directory" || name == "execute" || name == "search" ||
+                 name == "ask";
     if (!known) {
         return {false, "unknown tool \"" + name +
                            "\" - available: read_file, write_file, edit_file, "
-                           "list_directory, execute, search"};
+                           "list_directory, execute, search, ask"};
+    }
+
+    // ask runs its own interactive picker; it never takes the y/N prompt.
+    // A cancellation stays a plain "Cancelled by user." like the y/N path,
+    // so it renders as a normal result rather than a red error.
+    if (name == "ask") {
+        auto r = ask(arguments);
+        r.output = util::sanitize_utf8(r.output);
+        if (!r.ok && r.output != "Cancelled by user." &&
+            r.output.rfind("ERROR:", 0) != 0)
+            r.output = "ERROR: " + r.output;
+        return r;
     }
 
     bool readonly = is_readonly(name);
@@ -662,4 +694,33 @@ ToolResult ToolRunner::search(const nlohmann::json& args,
     if (r.ok && r.output == "(no output)")
         r.output = "no matches for " + util::shell_escape(pattern) + " in " + root;
     return r;
+}
+
+ToolResult ToolRunner::ask(const nlohmann::json& args) {
+    if (!args.contains("question")) return {false, "missing required argument \"question\""};
+    if (!args["question"].is_string()) return {false, "argument \"question\" must be a string"};
+    std::string question = util::trim(util::sanitize_utf8(args["question"].get<std::string>()));
+    if (question.empty()) return {false, "argument \"question\" must not be empty"};
+    if (question.size() > 2000) question = util::trim(question.substr(0, 2000));
+
+    if (!args.contains("options")) return {false, "missing required argument \"options\""};
+    if (!args["options"].is_array()) return {false, "argument \"options\" must be an array of strings"};
+    if (args["options"].empty()) return {false, "argument \"options\" must not be empty"};
+    if (args["options"].size() > 10)
+        return {false, "argument \"options\" must have at most 10 items"};
+    std::vector<std::string> options;
+    for (const auto& o : args["options"]) {
+        if (!o.is_string()) return {false, "argument \"options\" must be an array of strings"};
+        std::string s = util::trim(util::sanitize_utf8(o.get<std::string>()));
+        if (s.empty()) return {false, "argument \"options\" must not contain empty strings"};
+        if (s.size() > 500) s = util::trim(s.substr(0, 500));
+        options.push_back(std::move(s));
+    }
+
+    if (!ask_fn_) return {false, "ask tool has no interactive handler in this context"};
+    auto answer = ask_fn_(question, options);
+    if (!answer) return {false, "Cancelled by user."};
+    std::string a = util::trim(util::sanitize_utf8(*answer));
+    if (a.empty()) return {false, "Cancelled by user."};
+    return {true, a};
 }
