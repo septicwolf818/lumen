@@ -824,10 +824,12 @@ std::optional<std::string> UI::ask_question(InputReader& in,
     size_t custom_cursor = 0;  // byte index into custom
 
     // Panel geometry. Pure computation, no I/O, so it can run per keypress.
+    // The question itself is not part of the panel: it is already on screen
+    // in the [tool] ask scrollback block directly above, so repeating it
+    // here would only duplicate information.
     struct AskLayout {
         int top = 0;       // first popup row (1-based); panel covers top..rows
         int total = 0;
-        std::vector<std::string> qlines;
         size_t vis = 0;    // visible options
         size_t start = 0;  // first visible option index
         int input_row = -1;
@@ -836,38 +838,15 @@ std::optional<std::string> UI::ask_question(InputReader& in,
 
     auto compute_layout = [&]() {
         AskLayout L;
-        int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
-        std::string qsan = sanitize_text(question);
-        if (qsan.empty()) qsan = "(no question)";
-        for (const auto& raw : util::split_lines(qsan)) {
-            std::string rest = raw;
-            if (rest.empty()) {
-                L.qlines.push_back("");
-                continue;
-            }
-            while (utf8_len(rest) > static_cast<size_t>(cols)) {
-                L.qlines.push_back(utf8_prefix(rest, static_cast<size_t>(cols)));
-                rest = rest.substr(L.qlines.back().size());
-            }
-            L.qlines.push_back(rest);
-        }
-        if (L.qlines.empty()) L.qlines.push_back(qsan);
 
-        // Panel chrome rows: top rule + blank + blank + hint + bottom rule,
-        // plus the custom input row while editing. The panel never grows
-        // past max_popup rows so the conversation stays visible above it.
+        // Panel rows: top rule + options + blank + optional custom input +
+        // hint + bottom rule. The panel never grows past max_popup rows so
+        // the conversation (with the question) stays visible above it.
         int max_popup = rows - 2;  // keep status + at least one convo row
         if (max_popup < 6) max_popup = 6;
-        int chrome = 5 + (editing ? 1 : 0);
-        size_t max_q = static_cast<size_t>(std::max(1, max_popup - chrome - 1));
-        if (max_q > 4) max_q = 4;  // a popup is not the place for essays
-        if (L.qlines.size() > max_q) {
-            L.qlines.resize(max_q);
-            L.qlines.back() =
-                utf8_prefix(L.qlines.back(), static_cast<size_t>(std::max(0, cols - 3))) + "...";
-        }
-        int vis_count = max_popup - chrome - static_cast<int>(L.qlines.size());
+        int chrome = 4 + (editing ? 1 : 0);
+        int vis_count = max_popup - chrome;
         if (vis_count < 1) vis_count = 1;
         L.vis = std::min(opts.size(), static_cast<size_t>(vis_count));
         if (opts.size() > L.vis) {
@@ -875,12 +854,10 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             L.start = sel > half ? sel - half : 0;
             if (L.start + L.vis > opts.size()) L.start = opts.size() - L.vis;
         }
-        L.total = 1 + static_cast<int>(L.qlines.size()) + 1 + static_cast<int>(L.vis) +
-                  1 + (editing ? 1 : 0) + 1 + 1;
+        L.total = 1 + static_cast<int>(L.vis) + 1 + (editing ? 1 : 0) + 1 + 1;
         L.top = rows - L.total + 1;
         if (L.top < 2) L.top = 2;  // never cover the status row
-        L.input_row = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 +
-                      static_cast<int>(L.vis) + 1;
+        L.input_row = L.top + 1 + static_cast<int>(L.vis) + 1;
         L.hint_row = L.input_row + (editing ? 1 : 0);
         return L;
     };
@@ -888,8 +865,7 @@ std::optional<std::string> UI::ask_question(InputReader& in,
     auto paint_option_row = [&](const AskLayout& L, size_t idx) {
         int cols = std::max(10, term_.cols());
         int rows = std::max(8, term_.rows());
-        int r = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 +
-                static_cast<int>(idx - L.start);
+        int r = L.top + 1 + static_cast<int>(idx - L.start);
         if (r < 1 || r > rows) return;
         term_.move_cursor(r, 1);
         term_.clear_line();
@@ -967,20 +943,8 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             top += std::string(static_cast<size_t>(cols) - top.size(), '-');
         write_styled(term_, STYLE_DIM, utf8_prefix(top, static_cast<size_t>(cols)));
         ++r;
-        for (const auto& ql : L.qlines) {
-            if (r > rows) break;
-            term_.move_cursor(r, 1);
-            term_.clear_line();
-            write_styled(term_, STYLE_BOLD | STYLE_YELLOW, ql);
-            ++r;
-        }
-        if (r <= rows) {  // blank line
-            term_.move_cursor(r, 1);
-            term_.clear_line();
-            ++r;
-        }
         for (size_t k = 0; k < L.vis; ++k) paint_option_row(L, L.start + k);
-        r = L.top + 1 + static_cast<int>(L.qlines.size()) + 1 + static_cast<int>(L.vis) + 1;
+        r = L.top + 1 + static_cast<int>(L.vis) + 1;
         if (editing) {
             paint_input_row(L);
             ++r;
@@ -1037,11 +1001,15 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         custom_cursor = std::min(custom.size(), custom_cursor + len);
     };
 
-    // The base screen already shows the conversation (the caller redraws
-    // before running tools), so paint the panel once and then touch only
-    // the rows that change. Full repaints happen solely on geometry changes
-    // (edit toggle, resize), which keeps the panel flicker-free and stops
-    // consecutive popups of different heights from flashing over each other.
+    // The panel shows no question text (it is already in the [tool] ask
+    // scrollback block), so snap to the bottom first: that block is then
+    // guaranteed to sit directly above the panel. One full redraw here;
+    // after that only the rows that change are touched. Full repaints happen
+    // solely on geometry changes (edit toggle, resize), which keeps the
+    // panel flicker-free and stops consecutive popups of different heights
+    // from flashing over each other.
+    scroll_offset_ = 0;
+    redraw();
     AskLayout L = compute_layout();
     paint_popup(L);
     for (;;) {
