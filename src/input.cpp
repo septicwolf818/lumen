@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <poll.h>
 #include <cerrno>
+#include <algorithm>
+#include <chrono>
 
 InputReader::InputReader() = default;
 
@@ -10,22 +12,37 @@ void InputReader::push_byte(unsigned char c) {
 }
 
 std::optional<KeyEvent> InputReader::poll() {
-    unsigned char tmp[64];  // drain whatever bytes are ready
-    for (;;) {
-        ssize_t n = ::read(STDIN_FILENO, tmp, sizeof(tmp));
-        if (n > 0) {
-            buf_.append(reinterpret_cast<char*>(tmp), static_cast<size_t>(n));
-        } else {
-            break;
-        }
-    }
-    return try_parse();
+    return read(0);
 }
 
 std::optional<KeyEvent> InputReader::read(int timeout_ms) {
     for (;;) {
         auto ev = try_parse();
-        if (ev) return ev;
+        if (ev) {
+            escape_pending_ = false;
+            return ev;
+        }
+
+        // ESC is both a complete key and the prefix of terminal key sequences.
+        // Give fragmented sequences a short window to arrive before reporting
+        // a standalone Escape; otherwise a split arrow key leaks "[A" into the
+        // user's prompt.
+        bool starts_escape = !buf_.empty() &&
+                             static_cast<unsigned char>(buf_[0]) == 0x1b;
+        if (!starts_escape) {
+            escape_pending_ = false;
+        } else if (!escape_pending_) {
+            escape_pending_ = true;
+            escape_since_ = std::chrono::steady_clock::now();
+        } else if (std::chrono::steady_clock::now() - escape_since_ >=
+                   std::chrono::milliseconds(50)) {
+            KeyEvent escape;
+            escape.key = Key::Escape;
+            escape.raw = buf_.substr(0, 1);
+            buf_.erase(0, 1);
+            escape_pending_ = false;
+            return escape;
+        }
 
         if (eof_) {
             // stdin is gone: poll returns POLLHUP at once, so without this
@@ -38,12 +55,22 @@ std::optional<KeyEvent> InputReader::read(int timeout_ms) {
         struct pollfd pfd{};
         pfd.fd = STDIN_FILENO;
         pfd.events = POLLIN;
-        int pr = ::poll(&pfd, 1, timeout_ms);
+        int wait_ms = timeout_ms;
+        if (escape_pending_) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - escape_since_).count();
+            int until_escape = std::max(0, 50 - static_cast<int>(elapsed));
+            if (wait_ms < 0 || until_escape < wait_ms) wait_ms = until_escape;
+        }
+        int pr = ::poll(&pfd, 1, wait_ms);
         if (pr < 0) {
             if (errno == EINTR) continue;
             return std::nullopt;
         }
-        if (pr == 0) return std::nullopt;  // timeout
+        if (pr == 0) {
+            if (escape_pending_) continue;  // resolve ESC at its own deadline
+            return std::nullopt;
+        }
 
         unsigned char tmp[64];
         ssize_t n = ::read(STDIN_FILENO, tmp, sizeof(tmp));
@@ -176,13 +203,9 @@ std::optional<KeyEvent> InputReader::try_parse() {
 std::optional<KeyEvent> InputReader::parse_escape() {
     if (buf_.size() < 1) return std::nullopt;
 
-    // A lone ESC is reported as Escape; longer sequences parse as CSI below.
+    // A lone ESC is ambiguous until read()'s short sequence grace period ends.
     if (buf_.size() == 1) {
-        KeyEvent ev;
-        ev.key = Key::Escape;
-        ev.raw = buf_;
-        buf_.clear();
-        return ev;
+        return std::nullopt;
     }
 
     // ESC [ ...  (CSI)

@@ -104,7 +104,7 @@ On first run, select a model with `/model` (or `Ctrl-L`).
 /session list         List sessions (newest first, with last activity)
 /session load NAME    Load a session
 /session rename A B   Rename the current session
-/session delete NAME  Delete a session
+/session delete NAME  Delete a session (not the active one)
 /cd PATH              Change working directory
 /pwd                  Print working directory
 /clear                Clear the conversation display

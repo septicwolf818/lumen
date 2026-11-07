@@ -4,6 +4,7 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <chrono>
 
 // Keyboard decoder for TERM=linux and VT100/xterm-style terminals.
 
@@ -47,6 +48,8 @@ public:
 private:
     std::string buf_;
     bool eof_ = false;  // stdin reached EOF; read() paces instead of spinning
+    bool escape_pending_ = false;
+    std::chrono::steady_clock::time_point escape_since_{};
     std::optional<KeyEvent> try_parse();
     std::optional<KeyEvent> parse_escape();
 };

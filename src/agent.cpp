@@ -519,7 +519,7 @@ void Agent::show_help() {
     ui_.append("/session list                     List sessions");
     ui_.append("/session load [NAME]              Load session");
     ui_.append("/session rename [NAME] [NEWNAME]  Rename");
-    ui_.append("/session delete [NAME]            Delete");
+    ui_.append("/session delete [NAME]            Delete (not the active session)");
     ui_.append("/cd [PATH]                        Change directory");
     ui_.append("/pwd                              Print directory");
     ui_.append("/clear                            Clear display");
@@ -649,8 +649,16 @@ void Agent::handle_command(const std::string& line) {
         } else if (tok[1] == "load" && tok.size() >= 3) {
             load_session(tok[2]);
         } else if (tok[1] == "delete" && tok.size() >= 3) {
-            if (Session::remove(tok[2])) ui_.message("Deleted " + tok[2]);
-            else ui_.message("Not found", STYLE_RED);
+            const std::string& target = tok[2];
+            if (target == session_.name || target == session_.id ||
+                target == Session::sanitize_filename(session_.name)) {
+                ui_.message("Cannot delete the active session. Load or create another session first.",
+                            STYLE_YELLOW);
+            } else if (Session::remove(target)) {
+                ui_.message("Deleted " + target);
+            } else {
+                ui_.message("Not found", STYLE_RED);
+            }
         } else if (tok[1] == "rename" && tok.size() >= 4) {
             // Renames the current session only: the first argument must name
             // it, so "/session rename A B" cannot silently ignore A.
@@ -703,7 +711,10 @@ void Agent::handle_command(const std::string& line) {
         ui_.append(cfg_.to_json().dump(2));
     } else if (cmd == "/reload") {
         cfg_.load();
+        session_.model = cfg_.model;
         ollama_->set_base_url(cfg_.ollama_url);
+        ui_.set_markdown(cfg_.markdown);
+        reset_ctx_tracking();
         update_status();
         ui_.message("Config reloaded");
     } else {

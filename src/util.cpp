@@ -141,8 +141,22 @@ std::optional<fs::path> resolve_safe_path(const fs::path& cwd,
 
 std::string truncate(const std::string& s, size_t max_bytes, const std::string& notice) {
     if (s.size() <= max_bytes) return s;
-    size_t keep = max_bytes > notice.size() ? max_bytes - notice.size() : max_bytes / 2;
-    return s.substr(0, keep) + notice;
+    if (max_bytes == 0) return {};
+    size_t keep;
+    std::string suffix;
+    if (max_bytes > notice.size()) {
+        keep = max_bytes - notice.size();
+        suffix = notice;
+    } else {
+        keep = max_bytes / 2;
+        suffix = notice.substr(0, max_bytes - keep);
+    }
+    // The caller sanitizes after truncation. Do not cut a valid multi-byte
+    // UTF-8 character in half, or replacement characters could exceed the cap.
+    while (keep > 0 && keep < s.size() &&
+           (static_cast<unsigned char>(s[keep]) & 0xC0) == 0x80)
+        --keep;
+    return s.substr(0, keep) + suffix;
 }
 
 std::string fmt_tokens(size_t n) {

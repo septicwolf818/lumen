@@ -2,8 +2,12 @@
 #include "util.hpp"
 #include <fstream>
 #include <cstdlib>
+#include <limits>
 
 void Config::load() {
+    // Reload from the documented defaults so removed/invalid keys do not keep
+    // stale values from the previous in-memory configuration.
+    *this = Config{};
     std::string path = util::config_dir() + "/config.json";
     std::ifstream in(path);
     if (in) {
@@ -55,9 +59,18 @@ nlohmann::json Config::to_json() const {
 void Config::from_json(const nlohmann::json& j) {
     // Clamp negatives, which would wrap to huge size_t values.
     auto usize = [](const nlohmann::json& v, size_t def) -> size_t {
+        if (v.is_number_unsigned()) {
+            uint64_t n = v.get<uint64_t>();
+            return n > static_cast<uint64_t>(std::numeric_limits<size_t>::max())
+                       ? def
+                       : static_cast<size_t>(n);
+        }
         if (!v.is_number_integer()) return def;
         int64_t n = v.get<int64_t>();
-        return n < 0 ? def : static_cast<size_t>(n);
+        return n < 0 || static_cast<uint64_t>(n) >
+                            static_cast<uint64_t>(std::numeric_limits<size_t>::max())
+                   ? def
+                   : static_cast<size_t>(n);
     };
     if (j.contains("ollama_url") && j["ollama_url"].is_string())
         ollama_url = j["ollama_url"].get<std::string>();

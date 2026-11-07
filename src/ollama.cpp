@@ -23,6 +23,7 @@ struct StreamCtx {
     std::string thinking_acc;
     nlohmann::json tool_calls = nlohmann::json::array();
     bool aborted = false;
+    bool done = false;
     std::string error;
     int prompt_eval = -1;
     int eval_count = -1;
@@ -130,6 +131,7 @@ size_t OllamaClient::stream_cb(char* ptr, size_t size, size_t nmemb, void* userd
                 }
             }
             if (j.value("done", false)) {
+                ctx->done = true;
                 if (j.contains("prompt_eval_count") && j["prompt_eval_count"].is_number())
                     ctx->prompt_eval = j["prompt_eval_count"].get<int>();
                 if (j.contains("eval_count") && j["eval_count"].is_number())
@@ -372,6 +374,10 @@ bool OllamaClient::chat_stream(
     }
     if (http != 200 && http != 0) {
         if (err) *err = "Ollama HTTP " + std::to_string(http);
+        return false;
+    }
+    if (!ctx.done) {
+        if (err) *err = "Ollama stream ended before completion";
         return false;
     }
     return true;

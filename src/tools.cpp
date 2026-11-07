@@ -6,6 +6,10 @@
 #include <cerrno>
 #include <csignal>
 #include <algorithm>
+#include <climits>
+#include <limits>
+#include <iterator>
+#include <set>
 #include <unistd.h>
 #include <poll.h>
 #include <sys/wait.h>
@@ -22,6 +26,18 @@ constexpr int64_t kMaxCommandTimeoutSecs = 3600;
 // the caller waits past the command finishing.
 constexpr int kPollSliceMs = 50;
 
+bool json_integer(const nlohmann::json& value, int64_t& out) {
+    if (value.is_number_unsigned()) {
+        uint64_t n = value.get<uint64_t>();
+        if (n > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) return false;
+        out = static_cast<int64_t>(n);
+        return true;
+    }
+    if (!value.is_number_integer()) return false;
+    out = value.get<int64_t>();
+    return true;
+}
+
 // Reason a file path cannot be opened; "" means "exists, not a directory"
 // (the caller's open() decides the rest).
 std::string file_reason(const std::string& p) {
@@ -33,6 +49,8 @@ std::string file_reason(const std::string& p) {
     if (ec) return "cannot access " + p + ": " + ec.message();
     if (st.type() == fs::file_type::directory)
         return "\"" + p + "\" is a directory - use list_directory instead";
+    if (st.type() != fs::file_type::regular)
+        return "not a regular file: " + p;
     return "";
 }
 
@@ -130,7 +148,9 @@ nlohmann::json tool_definitions() {
                     {"properties", {
                         {"command", {{"type", "string"}}},
                         {"timeout_seconds", {{"type", "integer"},
-                                             {"description", "Kill the command after this many seconds (default 120, max 3600). Raise it for slow builds or test suites."}}}
+                                             {"minimum", 0},
+                                             {"maximum", 3600},
+                                             {"description", "Kill the command after this many seconds (default 120; 0 disables the timeout; max 3600). Raise it for slow builds or test suites."}}}
                     }},
                     {"required", nlohmann::json::array({"command"})}
                 }}
@@ -259,15 +279,19 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
     long start = 1;
     long limit = 0;  // 0 = to end of file
     if (args.contains("start")) {
-        if (!args["start"].is_number_integer() || args["start"].get<long>() < 1)
+        int64_t n = 0;
+        if (!json_integer(args["start"], n) || n < 1 ||
+            static_cast<uint64_t>(n) > static_cast<uint64_t>(LONG_MAX))
             return {false, "argument \"start\" must be a positive integer"};
-        start = args["start"].get<long>();
+        start = static_cast<long>(n);
         paging = true;
     }
     if (args.contains("limit")) {
-        if (!args["limit"].is_number_integer() || args["limit"].get<long>() < 1)
+        int64_t n = 0;
+        if (!json_integer(args["limit"], n) || n < 1 ||
+            static_cast<uint64_t>(n) > static_cast<uint64_t>(LONG_MAX))
             return {false, "argument \"limit\" must be a positive integer"};
-        limit = args["limit"].get<long>();
+        limit = static_cast<long>(n);
         paging = true;
     }
 
@@ -289,44 +313,107 @@ ToolResult ToolRunner::read_file(const nlohmann::json& args) {
         in.clear();
         in.seekg(0);
 
-        std::vector<std::string> lines;
-        std::string line;
-        long lineno = 0;
-        while (std::getline(in, line)) {
-            ++lineno;
-            if (lineno < start) continue;
-            lines.push_back(line);
-            if (limit > 0 && static_cast<long>(lines.size()) >= limit) break;
-        }
-        if (lines.empty()) {
-            if (lineno == 0) return {false, "file is empty: " + *sp};
-            return {false, "start line " + std::to_string(start) + " is past the end of " +
-                               *sp + " (" + std::to_string(lineno) +
-                               (lineno == 1 ? " line)" : " lines)")};
-        }
-
-        long total = -1;  // known only if we hit EOF
-        if (static_cast<long>(lines.size()) < limit || limit == 0) {
-            total = lineno;  // getline ran out
-        } else {
-            std::string peek;
-            if (!std::getline(in, peek)) total = lineno;
-        }
-
-        long last = start + static_cast<long>(lines.size()) - 1;
-        std::string header = "[" + *sp + " lines " + std::to_string(start) + "-" +
-                             std::to_string(last);
-        if (total >= 0) header += " of " + std::to_string(total);
-        else header += "; more lines below - raise start/limit to continue";
-        header += "]";
+        char chunk[4096];
+        size_t chunk_pos = 0;
+        size_t chunk_size = 0;
+        bool chunk_eof = false;
+        auto next_line = [&in, &chunk_pos, &chunk_size, &chunk_eof, &chunk]
+                         (std::string* dst, size_t cap, bool& truncated) {
+            if (dst) dst->clear();
+            truncated = false;
+            bool got = false;
+            for (;;) {
+                if (chunk_pos == chunk_size) {
+                    if (chunk_eof) return got;
+                    in.read(chunk, sizeof(chunk));
+                    chunk_size = static_cast<size_t>(in.gcount());
+                    chunk_pos = 0;
+                    if (chunk_size < sizeof(chunk)) chunk_eof = true;
+                    if (chunk_size == 0) return got;
+                }
+                const size_t available = chunk_size - chunk_pos;
+                const void* found = std::memchr(chunk + chunk_pos, '\n', available);
+                const size_t count = found
+                    ? static_cast<const char*>(found) - (chunk + chunk_pos)
+                    : available;
+                if (count > 0) {
+                    got = true;
+                    if (dst) {
+                        const size_t room = dst->size() < cap ? cap - dst->size() : 0;
+                        const size_t take = std::min(count, room);
+                        dst->append(chunk + chunk_pos, take);
+                        if (take < count) truncated = true;
+                    }
+                    chunk_pos += count;
+                }
+                if (found) {
+                    ++chunk_pos;  // consume the newline
+                    return true;
+                }
+            }
+        };
 
         std::string text;
-        for (size_t i = 0; i < lines.size(); ++i) {
-            if (i) text += "\n";
-            text += lines[i];
+        long lineno = 0;
+        long selected = 0;
+        bool content_truncated = false;
+        bool total_known = false;
+        long total = -1;
+        for (;;) {
+            if (limit > 0 && selected >= limit) {
+                bool ignored = false;
+                if (next_line(nullptr, 0, ignored)) {
+                    // There are more lines, but do not scan an unrequested tail.
+                } else {
+                    total = lineno;
+                    total_known = true;
+                }
+                break;
+            }
+
+            std::string line;
+            bool line_truncated = false;
+            size_t remaining = text.size() < cfg_.max_file_bytes
+                                   ? cfg_.max_file_bytes - text.size()
+                                   : 0;
+            if (selected > 0 && remaining > 0) --remaining;  // separating newline
+            bool keep_line = lineno + 1 >= start;
+            if (!next_line(keep_line ? &line : nullptr, remaining, line_truncated)) {
+                total = lineno;
+                total_known = true;
+                break;
+            }
+            ++lineno;
+            if (lineno < start) continue;
+
+            if (selected > 0) {
+                if (text.size() < cfg_.max_file_bytes) text.push_back('\n');
+                else content_truncated = true;
+            }
+            size_t room = text.size() < cfg_.max_file_bytes
+                              ? cfg_.max_file_bytes - text.size()
+                              : 0;
+            text.append(line, 0, room);
+            content_truncated = content_truncated || line_truncated || line.size() > room;
+            ++selected;
         }
-        if (text.size() > cfg_.max_file_bytes)
-            text = util::truncate(text, cfg_.max_file_bytes);
+
+        if (selected == 0) {
+            if (lineno == 0) return {false, "file is empty: " + *sp};
+            return {false, "start line " + std::to_string(start) + " is past the end of " +
+                                *sp + " (" + std::to_string(lineno) +
+                                (lineno == 1 ? " line)" : " lines)")};
+        }
+
+        long last = start + selected - 1;
+        std::string header = "[" + *sp + " lines " + std::to_string(start) + "-" +
+                             std::to_string(last);
+        if (total_known) header += " of " + std::to_string(total);
+        else header += "; more lines below - raise start/limit to continue";
+        header += "]";
+        if (content_truncated)
+            text += "\n[content truncated at " +
+                    std::to_string(cfg_.max_file_bytes) + " bytes]";
         text = util::sanitize_utf8(header + "\n" + text);
         return {true, text};
     }
@@ -378,6 +465,13 @@ ToolResult ToolRunner::write_file(const nlohmann::json& args) {
     std::error_code ec;
     if (fs::is_directory(*sp, ec))
         return {false, "\"" + *sp + "\" is a directory - cannot write a file over it"};
+    if (ec) return {false, "cannot access " + *sp + ": " + ec.message()};
+    bool exists = fs::exists(*sp, ec);
+    if (ec) return {false, "cannot access " + *sp + ": " + ec.message()};
+    if (exists && !fs::is_regular_file(*sp, ec)) {
+        if (ec) return {false, "cannot access " + *sp + ": " + ec.message()};
+        return {false, "not a regular file: " + *sp};
+    }
 
     fs::path p(*sp);
     if (p.has_parent_path()) {
@@ -465,9 +559,16 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
     }
 
     std::error_code ec;
-    std::ostringstream out;
-    out << "Listing " << path << ":\n";
-    std::vector<std::string> entries;
+    const std::string header = "Listing " + path + ":\n";
+    constexpr const char* kTruncated = "[listing truncated]\n";
+    const size_t max_output = cfg_.max_tool_output_bytes;
+    const size_t marker_size = std::strlen(kTruncated);
+    const size_t budget = max_output > header.size() + marker_size
+                              ? max_output - header.size() - marker_size
+                              : 0;
+    std::set<std::string> entries;
+    size_t entry_bytes = 0;
+    bool truncated = false;
     // Manual iteration with ec: the throwing overloads would terminate on a
     // stat error mid-listing.
     fs::directory_iterator it(*sp, ec);
@@ -477,13 +578,28 @@ ToolResult ToolRunner::list_directory(const nlohmann::json& args) {
         std::string name = it->path().filename().string();
         std::error_code tec;
         if (it->is_directory(tec)) name += "/";
-        entries.push_back(prefix + name);
+        std::string entry = prefix + name;
+        const size_t cost = entry.size() + 1;  // newline
+        if (cost > budget) {
+            truncated = true;
+            continue;
+        }
+        auto inserted = entries.insert(std::move(entry));
+        if (!inserted.second) continue;
+        entry_bytes += cost;
+        while (entry_bytes > budget && !entries.empty()) {
+            auto last = std::prev(entries.end());
+            entry_bytes -= last->size() + 1;
+            entries.erase(last);
+            truncated = true;
+        }
     }
     if (ec) return {false, "cannot list " + *sp + ": " + ec.message()};
-    std::sort(entries.begin(), entries.end());
-    for (auto& e : entries) out << e << "\n";
-    if (entries.empty()) out << "(empty)\n";
-    return {true, out.str()};
+    std::string output = header;
+    if (entries.empty() && !truncated) output += "(empty)\n";
+    for (const auto& e : entries) output += e + "\n";
+    if (truncated) output += kTruncated;
+    return {true, output};
 }
 
 ToolResult ToolRunner::execute(const nlohmann::json& args,
@@ -497,14 +613,15 @@ ToolResult ToolRunner::execute(const nlohmann::json& args,
     // the wait below ends the moment the command is done, however much of the
     // budget is left.
     uint64_t budget_ms = 0;
-    int64_t secs = cfg_.command_timeout;
+    uint64_t secs = static_cast<uint64_t>(cfg_.command_timeout);
     if (args.contains("timeout_seconds")) {
-        if (!args["timeout_seconds"].is_number_integer())
-            return {false, "argument \"timeout_seconds\" must be an integer"};
-        secs = args["timeout_seconds"].get<int64_t>();
+        int64_t requested = 0;
+        if (!json_integer(args["timeout_seconds"], requested) || requested < 0)
+            return {false, "argument \"timeout_seconds\" must be a non-negative integer"};
+        secs = static_cast<uint64_t>(requested);
     }
     if (secs > 0)
-        budget_ms = static_cast<uint64_t>(std::min(secs, kMaxCommandTimeoutSecs)) * 1000;
+        budget_ms = std::min(secs, static_cast<uint64_t>(kMaxCommandTimeoutSecs)) * 1000;
 
     // /bin/sh -c in cwd, stdout+stderr captured, output capped.
     int pipefd[2];
@@ -594,9 +711,10 @@ ToolResult ToolRunner::execute(const nlohmann::json& args,
         if (pr > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
             ssize_t n = read(pipefd[0], buf, sizeof(buf));
             if (n > 0) {
-                size_t take = std::min(static_cast<size_t>(n), limit - output.size());
+                size_t remaining = limit - output.size();
+                size_t take = std::min(static_cast<size_t>(n), remaining);
                 output.append(buf, take);
-                if (output.size() >= limit) {
+                if (static_cast<size_t>(n) > remaining) {
                     truncated = true;
                     break;
                 }
@@ -617,7 +735,8 @@ ToolResult ToolRunner::execute(const nlohmann::json& args,
         }
     }
 
-    if (timed_out || cancelled) killpg(pid, SIGKILL);  // the group, not just the shell
+    if (timed_out || cancelled || truncated)
+        killpg(pid, SIGKILL);  // the group, not just the shell
     close(pipefd[0]);
     if (!reaped) {
         // Retry until the child is reaped: giving up would leave a zombie and
@@ -691,9 +810,9 @@ ToolResult ToolRunner::search(const nlohmann::json& args,
     std::string pat = util::shell_escape(pattern);
     std::string rt = util::shell_escape(root);
     std::string cmd = "if command -v rg >/dev/null 2>&1; then "
-                      "rg -n --no-heading --with-filename -S --max-count 50 " + pat + " " + rt +
+                      "rg -n --no-heading --with-filename -S --max-count 50 -- " + pat + " " + rt +
                       " || [ $? -eq 1 ]; else "
-                      "grep -rnH --max-count=50 -E " + pat + " " + rt +
+                      "grep -rnH --max-count=50 -E -- " + pat + " " + rt +
                       " || [ $? -eq 1 ]; fi";
     nlohmann::json a;  // reuse the execute path (no extra confirmation)
     a["command"] = cmd;
