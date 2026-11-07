@@ -368,6 +368,10 @@ ToolResult ToolRunner::write_file(const nlohmann::json& args) {
     if (!args.contains("content")) return {false, "missing required argument \"content\""};
     if (!args["content"].is_string()) return {false, "argument \"content\" must be a string"};
     std::string arg = args["path"].get<std::string>();
+    const std::string& content = args["content"].get_ref<const std::string&>();
+    if (content.size() > cfg_.max_file_bytes)
+        return {false, "content exceeds max_file_bytes (" +
+                           std::to_string(cfg_.max_file_bytes) + " bytes)"};
     auto sp = safe_path(arg);
     if (!sp) return {false, path_denied(arg)};
 
@@ -382,12 +386,9 @@ ToolResult ToolRunner::write_file(const nlohmann::json& args) {
             return {false, "cannot create parent directories for " + *sp + ": " + ec.message()};
     }
 
-    errno = 0;
-    std::ofstream out(*sp, std::ios::binary | std::ios::trunc);
-    if (!out) return {false, os_error("cannot write", *sp)};
-    out << args["content"].get<std::string>();
-    if (!out) return {false, os_error("cannot write", *sp)};
-    return {true, "Wrote " + *sp + " (" + std::to_string(args["content"].get<std::string>().size()) + " bytes)"};
+    if (!util::write_file_atomic(*sp, content))
+        return {false, "cannot write " + *sp};
+    return {true, "Wrote " + *sp + " (" + std::to_string(content.size()) + " bytes)"};
 }
 
 ToolResult ToolRunner::edit_file(const nlohmann::json& args) {
@@ -403,6 +404,12 @@ ToolResult ToolRunner::edit_file(const nlohmann::json& args) {
 
     std::string why = file_reason(*sp);
     if (!why.empty()) return {false, why};
+
+    std::error_code size_ec;
+    uintmax_t file_size = fs::file_size(*sp, size_ec);
+    if (!size_ec && file_size > cfg_.max_file_bytes)
+        return {false, "file exceeds max_file_bytes (" +
+                           std::to_string(cfg_.max_file_bytes) + " bytes): " + *sp};
 
     errno = 0;
     std::ifstream in(*sp, std::ios::binary);
@@ -428,11 +435,11 @@ ToolResult ToolRunner::edit_file(const nlohmann::json& args) {
                            " - add more surrounding context so it matches exactly once"};
 
     content.replace(pos, old_t.size(), new_t);
-    errno = 0;
-    std::ofstream out(*sp, std::ios::binary | std::ios::trunc);
-    if (!out) return {false, os_error("cannot write", *sp)};
-    out << content;
-    if (!out) return {false, os_error("cannot write", *sp)};
+    if (content.size() > cfg_.max_file_bytes)
+        return {false, "edited content exceeds max_file_bytes (" +
+                           std::to_string(cfg_.max_file_bytes) + " bytes)"};
+    if (!util::write_file_atomic(*sp, content))
+        return {false, "cannot write " + *sp};
     return {true, "Edited " + *sp};
 }
 

@@ -7,6 +7,7 @@
 #include <curl/curl.h>
 #include <cstdio>
 #include <cstdlib>
+#include <clocale>
 #include <unistd.h>
 
 static void cleanup_curl() {
@@ -16,6 +17,7 @@ static void cleanup_curl() {
 int main(int argc, char** argv) {
     (void)argc;
     (void)argv;
+    std::setlocale(LC_CTYPE, "");  // wcwidth() follows the user's UTF-8 locale
 
     util::ensure_dir(util::config_dir());
     util::ensure_dir(util::sessions_dir());

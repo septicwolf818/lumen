@@ -214,6 +214,25 @@ inline std::string common_prefix(const std::vector<std::string>& v) {
         p.resize(n);
         if (p.empty()) break;
     }
+    // Candidate names may be UTF-8. Keep the common prefix on a complete
+    // character boundary before it is used as an input cursor byte offset.
+    size_t i = 0, valid_end = 0;
+    while (i < p.size()) {
+        unsigned char c = static_cast<unsigned char>(p[i]);
+        size_t len = c < 0x80 ? 1 :
+                     (c >= 0xC2 && c <= 0xDF) ? 2 :
+                     (c >= 0xE0 && c <= 0xEF) ? 3 :
+                     (c >= 0xF0 && c <= 0xF4) ? 4 : 1;
+        if (i + len > p.size()) break;
+        bool continuations = true;
+        for (size_t j = 1; j < len; ++j)
+            if ((static_cast<unsigned char>(p[i + j]) & 0xC0) != 0x80)
+                continuations = false;
+        if (!continuations) break;
+        i += len;
+        valid_end = i;
+    }
+    p.resize(valid_end);
     return p;
 }
 

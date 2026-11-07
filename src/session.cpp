@@ -145,8 +145,9 @@ std::string Session::unique_title(const std::string& base,
     // Files are addressed by stem (sanitized name or id), so stems must not
     // collide or two sessions would overwrite each other's file.
     auto taken = [&exclude_stem](const std::string& cand) {
+        const std::string stem = Session::sanitize_filename(cand);
         for (const auto& s : Session::list()) {
-            if (s == cand && s != exclude_stem) return true;
+            if (s == stem && s != exclude_stem) return true;
         }
         return false;
     };

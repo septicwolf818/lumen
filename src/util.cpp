@@ -1,11 +1,15 @@
 #include "util.hpp"
 #include <cstdlib>
+#include <cerrno>
 #include <ctime>
 #include <sstream>
 #include <algorithm>
 #include <fstream>
 #include <unistd.h>
 #include <pwd.h>
+#include <cwchar>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 namespace util {
 
@@ -40,26 +44,37 @@ bool ensure_dir(const std::string& path) {
 }
 
 bool write_file_atomic(const std::string& path, const std::string& data) {
-    std::string tmp = path + ".tmp";
-    {
-        std::ofstream out(tmp, std::ios::binary);
-        if (!out) return false;
-        out << data;
-        out.flush();
-        if (!out) {
-            std::error_code ec;
-            fs::remove(tmp, ec);
-            return false;
-        }
+    std::string tmp = path + ".tmp.XXXXXX";
+    std::vector<char> name(tmp.begin(), tmp.end());
+    name.push_back('\0');
+    int fd = ::mkstemp(name.data());
+    if (fd < 0) return false;
+    tmp.assign(name.data());
+
+    struct stat st{};
+    mode_t mode = 0;
+    if (::stat(path.c_str(), &st) == 0) {
+        mode = st.st_mode & 07777;
+    } else {
+        mode_t mask = ::umask(0);
+        ::umask(mask);
+        mode = static_cast<mode_t>(0666 & ~mask);
     }
-    std::error_code ec;
-    fs::rename(tmp, path, ec);
-    if (ec) {
-        std::error_code ec2;
-        fs::remove(tmp, ec2);
-        return false;
+
+    bool ok = ::fchmod(fd, mode) == 0;
+    size_t off = 0;
+    while (ok && off < data.size()) {
+        ssize_t n = ::write(fd, data.data() + off, data.size() - off);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { ok = false; break; }
+        off += static_cast<size_t>(n);
     }
-    return true;
+    if (ok && ::fsync(fd) != 0) ok = false;
+    if (::close(fd) != 0) ok = false;
+
+    if (ok && ::rename(tmp.c_str(), path.c_str()) == 0) return true;
+    ::unlink(tmp.c_str());
+    return false;
 }
 
 std::string now_iso8601() {
@@ -170,27 +185,53 @@ uint64_t steady_ms() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
+namespace {
+
+bool decode_utf8(const unsigned char* p, size_t remain, uint32_t& cp, size_t& len) {
+    if (remain == 0) return false;
+    unsigned char c = p[0];
+    if (c <= 0x7F) { cp = c; len = 1; return true; }
+    if (c >= 0xC2 && c <= 0xDF) {
+        len = 2;
+        if (remain < len || (p[1] & 0xC0) != 0x80) return false;
+        cp = ((c & 0x1F) << 6) | (p[1] & 0x3F);
+        return true;
+    }
+    if (c >= 0xE0 && c <= 0xEF) {
+        len = 3;
+        if (remain < len || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 ||
+            (c == 0xE0 && p[1] < 0xA0) || (c == 0xED && p[1] >= 0xA0)) return false;
+        cp = ((c & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+        return true;
+    }
+    if (c >= 0xF0 && c <= 0xF4) {
+        len = 4;
+        if (remain < len || (p[1] & 0xC0) != 0x80 || (p[2] & 0xC0) != 0x80 ||
+            (p[3] & 0xC0) != 0x80 || (c == 0xF0 && p[1] < 0x90) ||
+            (c == 0xF4 && p[1] > 0x8F)) return false;
+        cp = ((c & 0x07) << 18) | ((p[1] & 0x3F) << 12) |
+             ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+        return true;
+    }
+    return false;
+}
+
+int codepoint_width(uint32_t cp) {
+    if (cp > static_cast<uint32_t>(WCHAR_MAX)) return 1;
+    int w = ::wcwidth(static_cast<wchar_t>(cp));
+    return w < 0 ? 1 : w;
+}
+
+}  // namespace
+
 bool is_valid_utf8(const std::string& s) {
-    const unsigned char* p = reinterpret_cast<const unsigned char*>(s.data());
-    const unsigned char* end = p + s.size();
-    while (p < end) {
-        unsigned char c = *p;
-        if (c <= 0x7F) {
-            ++p;
-            continue;
-        }
-        int need = 0;
-        if ((c & 0xE0) == 0xC0) need = 1;
-        else if ((c & 0xF0) == 0xE0) need = 2;
-        else if ((c & 0xF8) == 0xF0) need = 3;
-        else return false;
-        if (p + need >= end) return false;
-        if (need == 1 && c < 0xC2) return false;
-        if (need == 3 && c > 0xF4) return false;
-        for (int i = 1; i <= need; ++i) {
-            if ((p[i] & 0xC0) != 0x80) return false;
-        }
-        p += 1 + need;
+    const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+    size_t i = 0;
+    while (i < s.size()) {
+        uint32_t cp = 0;
+        size_t len = 0;
+        if (!decode_utf8(p + i, s.size() - i, cp, len)) return false;
+        i += len;
     }
     return true;
 }
@@ -210,39 +251,55 @@ std::string sanitize_utf8(const std::string& s) {
             ++p;
             continue;
         }
-        if (c <= 0x7F) {
-            out.push_back(static_cast<char>(c));
-            ++p;
-            continue;
-        }
-        int need = 0;
-        if ((c & 0xE0) == 0xC0) need = 1;
-        else if ((c & 0xF0) == 0xE0) need = 2;
-        else if ((c & 0xF8) == 0xF0) need = 3;
-        else {
+        uint32_t cp = 0;
+        size_t len = 0;
+        size_t remain = static_cast<size_t>(end - p);
+        if (!decode_utf8(p, remain, cp, len)) {
             out.append(replacement);
             ++p;
             continue;
         }
-        if (p + need >= end) {
-            out.append(replacement);
-            break;
-        }
-        bool ok = true;
-        if (need == 1 && c < 0xC2) ok = false;
-        if (need == 3 && c > 0xF4) ok = false;
-        for (int i = 1; i <= need && ok; ++i) {
-            if ((p[i] & 0xC0) != 0x80) ok = false;
-        }
-        if (!ok) {
-            out.append(replacement);
-            ++p;
-            continue;
-        }
-        out.append(reinterpret_cast<const char*>(p), static_cast<size_t>(1 + need));
-        p += 1 + need;
+        out.append(reinterpret_cast<const char*>(p), len);
+        p += len;
     }
     return out;
+}
+
+size_t utf8_display_width(const std::string& s) {
+    const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+    size_t i = 0, width = 0;
+    while (i < s.size()) {
+        uint32_t cp = 0;
+        size_t len = 0;
+        if (!decode_utf8(p + i, s.size() - i, cp, len)) {
+            ++i;
+            ++width;
+            continue;
+        }
+        width += static_cast<size_t>(codepoint_width(cp));
+        i += len;
+    }
+    return width;
+}
+
+std::string utf8_prefix_columns(const std::string& s, size_t columns) {
+    const auto* p = reinterpret_cast<const unsigned char*>(s.data());
+    size_t i = 0, width = 0;
+    while (i < s.size()) {
+        uint32_t cp = 0;
+        size_t len = 0;
+        if (!decode_utf8(p + i, s.size() - i, cp, len)) {
+            if (width == columns) break;
+            ++i;
+            ++width;
+            continue;
+        }
+        size_t cw = static_cast<size_t>(codepoint_width(cp));
+        if (width + cw > columns) break;
+        width += cw;
+        i += len;
+    }
+    return s.substr(0, i);
 }
 
 void sanitize_json(nlohmann::json& j) {

@@ -144,6 +144,7 @@ private:
     int stream_style_ = 0;
     std::string stream_acc_;
     size_t stream_base_ = 0;  // index of the line begin_stream() opened
+    uint64_t stream_last_render_ms_ = 0;
     size_t queue_count_ = 0;
     int working_depth_ = 0;      // nested set_working() frames
     int spinner_frame_ = 0;      // index into "|/-\"

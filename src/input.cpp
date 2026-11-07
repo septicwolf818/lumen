@@ -115,18 +115,26 @@ std::optional<KeyEvent> InputReader::try_parse() {
         return parse_escape();
     }
 
-    // Printable ASCII, or one whole UTF-8 character as a single Char event.
+    // Printable ASCII, or one validated UTF-8 character as a single Char event.
     if (c >= 32) {
         size_t len = 1;
-        if ((c & 0xE0) == 0xC0) len = 2;
-        else if ((c & 0xF0) == 0xE0) len = 3;
-        else if ((c & 0xF8) == 0xF0) len = 4;
-        if (buf_.size() < len) return std::nullopt;  // wait for more
-
+        bool valid_start = true;
+        bool incomplete = false;
+        if (c >= 0xC2 && c <= 0xDF) len = 2;
+        else if (c >= 0xE0 && c <= 0xEF) len = 3;
+        else if (c >= 0xF0 && c <= 0xF4) len = 4;
+        else if (c >= 0x80) valid_start = false;
+        if (!valid_start) len = 1;
+        if (buf_.size() < len) {
+            if (!eof_) return std::nullopt;
+            len = 1;  // incomplete final byte: consume it as replacement below
+            incomplete = true;
+        }
         KeyEvent ev;
         ev.key = Key::Char;
-        ev.raw = buf_.substr(0, len);
-        if (len == 1) {
+        if (!valid_start || incomplete) {
+            ev.codepoint = 0xFFFD;
+        } else if (len == 1) {
             ev.codepoint = c;
         } else {
             uint32_t cp = 0;
@@ -142,8 +150,18 @@ std::optional<KeyEvent> InputReader::try_parse() {
                    | ((static_cast<unsigned char>(buf_[2]) & 0x3F) << 6)
                    | (static_cast<unsigned char>(buf_[3]) & 0x3F);
             }
-            ev.codepoint = cp;
+            bool valid = true;
+            for (size_t i = 1; i < len; ++i)
+                if ((static_cast<unsigned char>(buf_[i]) & 0xC0) != 0x80) valid = false;
+            if ((len == 3 && ((c == 0xE0 && static_cast<unsigned char>(buf_[1]) < 0xA0) ||
+                              (c == 0xED && static_cast<unsigned char>(buf_[1]) >= 0xA0))) ||
+                (len == 4 && ((c == 0xF0 && static_cast<unsigned char>(buf_[1]) < 0x90) ||
+                              (c == 0xF4 && static_cast<unsigned char>(buf_[1]) > 0x8F))))
+                valid = false;
+            ev.codepoint = valid ? cp : 0xFFFD;
+            if (!valid) len = 1;  // rescan following bytes independently
         }
+        ev.raw = buf_.substr(0, len);
         buf_.erase(0, len);
         return ev;
     }

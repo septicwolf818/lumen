@@ -140,11 +140,7 @@ void Agent::update_status() {
 
 size_t Agent::sent_chars() const {
     size_t n = 0;
-    for (const auto& m : session_.messages) {
-        auto j = m.to_json();
-        j.erase("thinking");  // display-only; never sent back to the model
-        n += j.dump().size();
-    }
+    for (const auto& j : build_messages()) n += j.dump().size();
     return n;
 }
 
@@ -200,7 +196,8 @@ void Agent::update_ctx_display() {
 void Agent::new_session(const std::string& name) {
     session_ = Session{};
     session_.id = Session::make_id();
-    session_.name = name.empty() ? "session-" + session_.id.substr(2, 6) : name;
+    std::string requested_name = name.empty() ? "session-" + session_.id.substr(2, 6) : name;
+    session_.name = Session::unique_title(requested_name, "");
     title_attempted_ = false;
     session_.model = cfg_.model;
     session_.created = util::now_iso8601();
@@ -213,6 +210,8 @@ void Agent::new_session(const std::string& name) {
     session_.messages.push_back(sys);
     ui_.clear_conversation();
     ui_.append("New session: " + session_.name, STYLE_BOLD);
+    if (session_.name != requested_name)
+        ui_.message("That session name already exists; using " + session_.name, STYLE_YELLOW);
     ui_.append("");
     cfg_.last_session = session_.name;
     cfg_.save();
@@ -248,6 +247,11 @@ std::function<bool()> Agent::abort_watcher() {
 bool Agent::rename_session(const std::string& new_name) {
     if (new_name.empty() || new_name == session_.name) return false;
     std::string old_name = session_.name;
+    std::string old_stem = Session::sanitize_filename(old_name);
+    if (Session::unique_title(new_name, old_stem) != new_name) {
+        ui_.message("A session with that name already exists", STYLE_YELLOW);
+        return false;
+    }
     session_.name = new_name;
     if (save_session(false)) {
         if (Session::sanitize_filename(old_name) !=
@@ -469,7 +473,36 @@ void Agent::replay_message(const Message& m) {
 
 std::vector<nlohmann::json> Agent::build_messages() const {
     std::vector<nlohmann::json> out;
-    for (const auto& m : session_.messages) {
+    size_t system_index = session_.messages.size();
+    for (size_t i = 0; i < session_.messages.size(); ++i) {
+        if (session_.messages[i].role == Role::System) {
+            system_index = i;
+            break;
+        }
+    }
+
+    // The system prompt is not conversation history. Keep it, then send only
+    // the most recent configured number of conversation messages. If a window
+    // starts in the middle of a tool-result run, drop those orphaned results.
+    size_t start = 0;
+    const size_t cap = cfg_.max_history_messages;
+    size_t conversation_count = session_.messages.size() -
+                                (system_index < session_.messages.size() ? 1 : 0);
+    if (cap < conversation_count) {
+        start = session_.messages.size() - cap;
+        if (system_index < start) start = std::max(start, system_index + 1);
+        while (start < session_.messages.size() &&
+               session_.messages[start].role == Role::Tool) ++start;
+    }
+
+    if (system_index < session_.messages.size()) {
+        auto j = session_.messages[system_index].to_json();
+        j.erase("thinking");
+        out.push_back(std::move(j));
+    }
+    for (size_t i = start; i < session_.messages.size(); ++i) {
+        const auto& m = session_.messages[i];
+        if (m.role == Role::System) continue;
         auto j = m.to_json();
         j.erase("thinking");  // display-only; resent thinking only bloats context
         out.push_back(std::move(j));
@@ -1038,6 +1071,19 @@ void Agent::pump_input() {
     ui_.tick_spinner();  // animate the separator while the model works
     ui_.tick_marquee();
     while (auto ev = input_.read(0)) {
+        if (ev->key == Key::CtrlC) {
+            if (Terminal::sigint_count.fetch_add(1) + 1 >= 2) {
+                running_ = false;
+                abort_gen_ = true;
+                cancel_all_ = true;
+                queue_.clear();
+                ui_.set_queue(0);
+                ui_.redraw();
+                return;
+            }
+        } else {
+            Terminal::sigint_count.store(0);
+        }
         switch (ev->key) {
             case Key::Enter: {
                 std::string line = util::trim(ui_.input_buf());
@@ -1316,8 +1362,13 @@ int Agent::run() {
         auto ev = input_.read(100);
         if (!ev) continue;
 
-        // Double Ctrl-C quits only when consecutive; any other key resets it.
-        if (ev->key != Key::CtrlC) Terminal::sigint_count.store(0);
+        // Count keyboard Ctrl-C as well as process-delivered SIGINT. Raw mode
+        // disables ISIG, so the console normally sends Ctrl-C as an input byte.
+        if (ev->key == Key::CtrlC) {
+            if (Terminal::sigint_count.fetch_add(1) + 1 >= 2) break;
+        } else {
+            Terminal::sigint_count.store(0);
+        }
 
         switch (ev->key) {
             case Key::CtrlQ:

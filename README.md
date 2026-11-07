@@ -158,7 +158,7 @@ Paths passed to `/cd` and to tool `path` arguments may start with `~`.
 | `max_file_bytes` | Read/write size cap for file tools. |
 | `max_tool_output_bytes` | Truncation cap for tool output. |
 | `command_timeout` | Seconds one `execute` command may run before it is killed (0 = no limit). |
-| `max_history_messages` | Upper bound on messages kept per request. |
+| `max_history_messages` | Recent conversation messages sent per request; the system prompt is additional. |
 | `auto_compact` | Compact automatically near the context limit. |
 | `compaction_threshold` | Percentage of the context window that triggers compaction. |
 | `context_limit` | Override the detected context window (0 = detect from Ollama). |

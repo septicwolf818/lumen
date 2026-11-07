@@ -52,6 +52,9 @@ uint64_t steady_ms();
 bool is_valid_utf8(const std::string& s);
 // Replace invalid sequences with U+FFFD; also strips NULs
 std::string sanitize_utf8(const std::string& s);
+// Count terminal columns and take a UTF-8-safe prefix no wider than columns.
+size_t utf8_display_width(const std::string& s);
+std::string utf8_prefix_columns(const std::string& s, size_t columns);
 // Recursively sanitize every string in a JSON value, so dump() never throws
 // type_error.316 on invalid UTF-8 arriving from the model or tool output.
 void sanitize_json(nlohmann::json& j);

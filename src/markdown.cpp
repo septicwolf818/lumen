@@ -1,6 +1,7 @@
 #include "markdown.hpp"
 
 #include "keywords_internal.hpp"
+#include "util.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -33,25 +34,11 @@ size_t utf8_char_len(unsigned char c) {
 }
 
 size_t utf8_len(const std::string& s) {
-    size_t i = 0, n = 0;
-    while (i < s.size()) {
-        size_t l = utf8_char_len(static_cast<unsigned char>(s[i]));
-        if (i + l > s.size()) l = 1;
-        i += l;
-        ++n;
-    }
-    return n;
+    return util::utf8_display_width(s);
 }
 
 std::string utf8_prefix(const std::string& s, size_t n) {
-    size_t i = 0, c = 0;
-    while (i < s.size() && c < n) {
-        size_t l = utf8_char_len(static_cast<unsigned char>(s[i]));
-        if (i + l > s.size()) l = 1;
-        i += l;
-        ++c;
-    }
-    return s.substr(0, i);
+    return util::utf8_prefix_columns(s, n);
 }
 
 std::vector<std::string> split_lines(const std::string& s) {
@@ -685,11 +672,12 @@ void put_word(WrapState& s, const std::string& w, int style) {
     }
     size_t i = 0;
     while (i < w.size()) {
-        if (s.col >= s.width) s.newline();
         size_t l = utf8_char_len(static_cast<unsigned char>(w[i]));
         if (i + l > w.size()) l = 1;
+        int cw = static_cast<int>(util::utf8_display_width(w.substr(i, l)));
+        if (s.col + cw > s.width) s.newline();
         s.append(w.substr(i, l), style);
-        ++s.col;
+        s.col += cw;
         i += l;
     }
 }
@@ -1067,9 +1055,11 @@ void render_block(const Block& b, int width, Lines& out) {
                     while (pos < rl.size() && cnt < static_cast<size_t>(width)) {
                         size_t l = utf8_char_len(static_cast<unsigned char>(rl[pos]));
                         if (pos + l > rl.size()) l = 1;
+                        size_t cw = util::utf8_display_width(rl.substr(pos, l));
+                        if (cnt > 0 && cnt + cw > static_cast<size_t>(width)) break;
                         chunk += rl.substr(pos, l);
                         pos += l;
-                        ++cnt;
+                        cnt += cw;
                     }
                     // Only the first wrap chunk continues the previous line's
                     // comment state; continuation chunks are fresh text.

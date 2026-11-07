@@ -42,41 +42,14 @@ void write_styled(Terminal& t, int style, const std::string& text) {
     t.reset_attrs();
 }
 
-// Cut to at most n characters (UTF-8 codepoints) without splitting a
-// sequence. Truncation must count characters, not bytes: wrap() limits
-// lines to n display columns, and a line of n characters can easily be
-// more than n bytes - cutting at byte n would drop characters that fit.
+// Cut to terminal columns without splitting a UTF-8 sequence.
 std::string utf8_prefix(const std::string& s, size_t n) {
-    size_t i = 0;
-    size_t count = 0;
-    while (i < s.size() && count < n) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t len = 1;
-        if ((c & 0xE0) == 0xC0) len = 2;
-        else if ((c & 0xF0) == 0xE0) len = 3;
-        else if ((c & 0xF8) == 0xF0) len = 4;
-        if (i + len > s.size()) len = 1;
-        i += len;
-        ++count;
-    }
-    return s.substr(0, i);
+    return util::utf8_prefix_columns(s, n);
 }
 
-// Number of characters (UTF-8 codepoints) in s.
+// Number of terminal columns in a UTF-8 string.
 size_t utf8_len(const std::string& s) {
-    size_t i = 0;
-    size_t count = 0;
-    while (i < s.size()) {
-        unsigned char c = static_cast<unsigned char>(s[i]);
-        size_t len = 1;
-        if ((c & 0xE0) == 0xC0) len = 2;
-        else if ((c & 0xF0) == 0xE0) len = 3;
-        else if ((c & 0xF8) == 0xF0) len = 4;
-        if (i + len > s.size()) len = 1;
-        i += len;
-        ++count;
-    }
-    return count;
+    return util::utf8_display_width(s);
 }
 
 // Scrollback cap.
@@ -87,6 +60,7 @@ constexpr uint64_t kMarqueeMs = 500;
 struct StatusChar {
     std::string bytes;
     int style;
+    size_t width;
 };
 
 size_t utf8_seq_len(unsigned char c) {
@@ -101,18 +75,59 @@ void push_status_chars(std::vector<StatusChar>& out, const std::string& s, int s
     while (i < s.size()) {
         size_t len = utf8_seq_len(static_cast<unsigned char>(s[i]));
         if (i + len > s.size()) len = 1;
-        out.push_back({s.substr(i, len), style});
+        std::string bytes = s.substr(i, len);
+        out.push_back({bytes, style, std::max<size_t>(1, util::utf8_display_width(bytes))});
         i += len;
     }
 }
 
+std::string input_window(const std::string& s, size_t cursor, size_t columns,
+                        size_t& cursor_column) {
+    struct Unit { size_t begin; size_t end; size_t width; };
+    std::vector<Unit> units;
+    for (size_t i = 0; i < s.size();) {
+        size_t len = utf8_seq_len(static_cast<unsigned char>(s[i]));
+        if (i + len > s.size()) len = 1;
+        std::string part = s.substr(i, len);
+        units.push_back({i, i + len, util::utf8_display_width(part)});
+        i += len;
+    }
+    cursor = std::min(cursor, s.size());
+    size_t cursor_idx = 0;
+    while (cursor_idx < units.size() && units[cursor_idx].end <= cursor) ++cursor_idx;
+
+    // Keep the cursor visible with a little room on its right where possible.
+    size_t start_idx = cursor_idx;
+    size_t left_width = 0;
+    size_t left_budget = columns > 1 ? columns - 1 : 0;
+    while (start_idx > 0 && left_width + units[start_idx - 1].width <= left_budget) {
+        --start_idx;
+        left_width += units[start_idx].width;
+    }
+    size_t end_idx = start_idx;
+    size_t shown_width = 0;
+    while (end_idx < units.size() &&
+           shown_width + units[end_idx].width <= columns) {
+        shown_width += units[end_idx].width;
+        ++end_idx;
+    }
+    if (cursor_idx > end_idx) cursor_idx = end_idx;
+
+    size_t start_byte = start_idx < units.size() ? units[start_idx].begin : s.size();
+    size_t end_byte = end_idx > start_idx ? units[end_idx - 1].end : start_byte;
+    cursor_column = 0;
+    for (size_t i = start_idx; i < cursor_idx; ++i) cursor_column += units[i].width;
+    return s.substr(start_byte, end_byte - start_byte);
+}
+
 std::string sanitize_text(const std::string& in) {
+    const std::string valid = util::sanitize_utf8(in);
     std::string out;
-    out.reserve(in.size());
+    out.reserve(valid.size());
     size_t col = 0;
     size_t i = 0;
-    while (i < in.size()) {
-        unsigned char c = static_cast<unsigned char>(in[i]);
+    while (i < valid.size()) {
+        unsigned char c = static_cast<unsigned char>(valid[i]);
         if (c == '\n') {
             out.push_back('\n');
             col = 0;
@@ -131,9 +146,19 @@ std::string sanitize_text(const std::string& in) {
             continue;
         }
         size_t len = utf8_seq_len(c);
-        if (i + len > in.size()) len = 1;
-        out.append(in, i, len);
-        col += 1;
+        if (i + len > valid.size()) len = 1;
+        uint32_t cp = c;
+        if (len == 2) cp = ((c & 0x1F) << 6) | (static_cast<unsigned char>(valid[i + 1]) & 0x3F);
+        else if (len == 3) cp = ((c & 0x0F) << 12) |
+            ((static_cast<unsigned char>(valid[i + 1]) & 0x3F) << 6) |
+            (static_cast<unsigned char>(valid[i + 2]) & 0x3F);
+        else if (len == 4) cp = ((c & 0x07) << 18) |
+            ((static_cast<unsigned char>(valid[i + 1]) & 0x3F) << 12) |
+            ((static_cast<unsigned char>(valid[i + 2]) & 0x3F) << 6) |
+            (static_cast<unsigned char>(valid[i + 3]) & 0x3F);
+        if (cp >= 0x80 && cp <= 0x9F) { i += len; continue; }
+        out.append(valid, i, len);
+        col += util::utf8_display_width(valid.substr(i, len));
         i += len;
     }
     return out;
@@ -194,9 +219,14 @@ int map_md_style(int st, bool dim = false) {
 UI::UI(Terminal& term) : term_(term) {}
 
 void UI::set_status(const std::string& model, const std::string& session, const std::string& cwd) {
-    status_model_ = model;
-    status_session_ = session;
-    status_cwd_ = cwd;
+    auto clean = [](const std::string& s) {
+        std::string v = sanitize_text(s);
+        std::replace(v.begin(), v.end(), '\n', ' ');
+        return v;
+    };
+    status_model_ = clean(model);
+    status_session_ = clean(session);
+    status_cwd_ = clean(cwd);
     marquee_offset_ = 0;
 }
 
@@ -259,7 +289,7 @@ std::vector<DisplayLine> UI::wrap_spans(const std::vector<Span>& spans, int widt
             size_t len = utf8_seq_len(c);
             if (i + len > sp.text.size()) len = 1;
             tokens.push_back({sp.text.substr(i, len), sp.style, false});
-            ++tcol;
+            tcol += util::utf8_display_width(sp.text.substr(i, len));
             i += len;
         }
     }
@@ -310,11 +340,12 @@ std::vector<DisplayLine> UI::wrap_spans(const std::vector<Span>& spans, int widt
         }
         size_t k = 0;
         while (k < t.text.size()) {
-            if (col >= width) newline();
             size_t l = utf8_seq_len(static_cast<unsigned char>(t.text[k]));
             if (k + l > t.text.size()) l = 1;
+            int cw = static_cast<int>(util::utf8_display_width(t.text.substr(k, l)));
+            if (col + cw > width) newline();
             append(t.text.substr(k, l), t.style);
-            ++col;
+            col += cw;
             k += l;
         }
     }
@@ -365,6 +396,11 @@ void UI::begin_stream(int style) {
     lines_.push_back(DisplayLine{});
     // stream_token() pops back to this line before re-wrapping.
     stream_base_ = lines_.size() - 1;
+    while (lines_.size() > kMaxLines) {
+        lines_.pop_front();
+        if (stream_base_ > 0) --stream_base_;
+    }
+    stream_last_render_ms_ = util::steady_ms();
 }
 
 void UI::stream_token(const std::string& tok) {
@@ -372,6 +408,12 @@ void UI::stream_token(const std::string& tok) {
         begin_stream();
     }
     stream_acc_ += tok;
+    // Tokens can arrive much faster than the terminal can display them. Limit
+    // full-history parsing/wrapping to the UI refresh cadence; end_stream()
+    // always performs the final exact render.
+    uint64_t now = util::steady_ms();
+    if (now - stream_last_render_ms_ < 80) return;
+    stream_last_render_ms_ = now;
     // Render Markdown live: the parser is safe on partial input (an unclosed
     // fence renders as code, half-typed emphasis stays literal), so the layout
     // never jumps. Thinking blocks use the same renderer with dim.
@@ -385,15 +427,28 @@ void UI::stream_token(const std::string& tok) {
     while (lines_.size() > stream_base_) lines_.pop_back();
     for (auto& dl : wrapped) lines_.push_back(std::move(dl));
     if (lines_.empty()) lines_.push_back(DisplayLine{});
+    while (lines_.size() > kMaxLines) {
+        lines_.pop_front();
+        if (stream_base_ > 0) --stream_base_;
+    }
 }
 
 void UI::end_stream() {
-    // Final render closes any still-open fence cleanly.
-    if (markdown_ && !stream_acc_.empty()) {
-        auto rendered = render_markdown(stream_acc_, term_.cols(),
-                                        stream_style_ == STYLE_DIM);
+    if (streaming_ || !stream_acc_.empty()) {
+        // Final render includes tokens skipped by throttling and closes any
+        // still-open Markdown fence cleanly.
+        std::vector<DisplayLine> rendered;
+        if (markdown_)
+            rendered = render_markdown(stream_acc_, term_.cols(), stream_style_ == STYLE_DIM);
+        else
+            rendered = wrap_spans({{sanitize_text(stream_acc_), stream_style_}},
+                                  std::max(10, term_.cols()));
         while (lines_.size() > stream_base_) lines_.pop_back();
         for (auto& dl : rendered) lines_.push_back(std::move(dl));
+        while (lines_.size() > kMaxLines) {
+            lines_.pop_front();
+            if (stream_base_ > 0) --stream_base_;
+        }
     }
     streaming_ = false;
     stream_acc_.clear();
@@ -429,10 +484,14 @@ void UI::set_input(const std::string& s) {
 void UI::set_input(const std::string& s, size_t cursor) {
     input_ = s;
     cursor_ = std::min(cursor, s.size());
+    while (cursor_ > 0 && cursor_ < input_.size() &&
+           (static_cast<unsigned char>(input_[cursor_]) & 0xC0) == 0x80)
+        --cursor_;
 }
 
 void UI::input_insert(uint32_t cp) {
     std::string u = utf8_from_cp(cp);
+    if (u.empty()) return;
     input_.insert(cursor_, u);
     cursor_ += u.size();
 }
@@ -510,6 +569,8 @@ void UI::push_history(const std::string& s) {
 
 std::string UI::utf8_from_cp(uint32_t cp) {
     std::string r;
+    if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F)) return r;
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
     if (cp < 0x80) {
         r += static_cast<char>(cp);
     } else if (cp < 0x800) {
@@ -578,9 +639,17 @@ void UI::draw_status() {
         const int style = chars[idx].style;
         std::string run;
         while (shown < static_cast<size_t>(cols) && chars[idx].style == style) {
+            if (chars[idx].width > static_cast<size_t>(cols) - shown) {
+                if (run.empty()) {
+                    run = " ";
+                    ++shown;
+                    idx = (idx + 1) % period;
+                }
+                break;
+            }
             run += chars[idx].bytes;
+            shown += chars[idx].width;
             idx = (idx + 1) % period;
-            ++shown;
         }
         write_styled(term_, style, run);
     }
@@ -660,19 +729,11 @@ void UI::draw_input() {
     term_.clear_line();
     std::string prefix = "> ";
     write_styled(term_, STYLE_BOLD | STYLE_GREEN, prefix);
-    int avail = term_.cols() - static_cast<int>(prefix.size());  // window the input
-    if (avail < 4) avail = 4;
-    std::string shown = input_;
-    size_t vis_cursor = cursor_;
-    if (static_cast<int>(shown.size()) > avail) {
-        size_t start = 0;  // window around the cursor
-        if (cursor_ + 1 > static_cast<size_t>(avail))
-            start = cursor_ + 1 - static_cast<size_t>(avail);
-        shown = input_.substr(start, static_cast<size_t>(avail));
-        vis_cursor = cursor_ - start;
-    }
+    size_t avail = static_cast<size_t>(std::max(1, term_.cols() - static_cast<int>(prefix.size())));
+    size_t vis_cursor = 0;
+    std::string shown = input_window(input_, cursor_, avail, vis_cursor);
     term_.write(shown);
-    term_.move_cursor(term_.rows(), static_cast<int>(prefix.size()) + static_cast<int>(vis_cursor) + 1);
+    term_.move_cursor(term_.rows(), static_cast<int>(prefix.size() + vis_cursor) + 1);
 }
 
 void UI::redraw() {
@@ -774,39 +835,6 @@ std::optional<std::string> UI::ask_question(InputReader& in,
             size_t len = utf8_seq_len(c);
             if (i + len > s.size()) len = 1;
             out.append(s, i, len);
-            i += len;
-        }
-        return out;
-    };
-
-    // Byte index -> character index (for cursor placement in UTF-8 text).
-    auto char_count_before = [](const std::string& s, size_t bytes) {
-        size_t n = 0;
-        size_t i = 0;
-        while (i < s.size() && i < bytes) {
-            unsigned char c = static_cast<unsigned char>(s[i]);
-            size_t len = 1;
-            if ((c & 0xE0) == 0xC0) len = 2;
-            else if ((c & 0xF0) == 0xE0) len = 3;
-            else if ((c & 0xF8) == 0xF0) len = 4;
-            if (i + len > s.size()) len = 1;
-            i += len;
-            ++n;
-        }
-        return n;
-    };
-
-    // Split into UTF-8 characters (each entry is one character's bytes).
-    auto split_chars = [](const std::string& s) {
-        std::vector<std::string> out;
-        for (size_t i = 0; i < s.size();) {
-            unsigned char c = static_cast<unsigned char>(s[i]);
-            size_t len = 1;
-            if ((c & 0xE0) == 0xC0) len = 2;
-            else if ((c & 0xF0) == 0xE0) len = 3;
-            else if ((c & 0xF8) == 0xF0) len = 4;
-            if (i + len > s.size()) len = 1;
-            out.push_back(s.substr(i, len));
             i += len;
         }
         return out;
@@ -923,27 +951,14 @@ std::optional<std::string> UI::ask_question(InputReader& in,
         term_.write(prefix);
         int avail = cols - static_cast<int>(prefix.size());
         if (avail < 4) avail = 4;
-        auto chars = split_chars(custom);
-        size_t cursor_char = char_count_before(custom, custom_cursor);
-        size_t win_start = 0;
-        if (chars.size() > static_cast<size_t>(avail)) {
-            win_start = cursor_char >= static_cast<size_t>(avail)
-                ? cursor_char - static_cast<size_t>(avail) + 1
-                : 0;
-            if (win_start + static_cast<size_t>(avail) > chars.size())
-                win_start = chars.size() - static_cast<size_t>(avail);
-        }
         size_t col = 0;
-        if (chars.empty()) {
+        if (custom.empty()) {
             write_styled(term_, STYLE_DIM,
                          utf8_prefix("Type your answer...", static_cast<size_t>(avail)));
         } else {
-            std::string shown;
-            for (size_t k = win_start;
-                 k < chars.size() && k < win_start + static_cast<size_t>(avail); ++k)
-                shown += chars[k];
+            std::string shown = input_window(custom, custom_cursor,
+                                             static_cast<size_t>(avail), col);
             term_.write(shown);
-            col = cursor_char >= win_start ? cursor_char - win_start : 0;
         }
         term_.move_cursor(L.input_row,
                           static_cast<int>(prefix.size() + col) + 1);
